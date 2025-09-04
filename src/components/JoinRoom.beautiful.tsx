@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 
 const EMOJI_OPTIONS = [
@@ -19,6 +19,10 @@ export function JoinRoom({ onJoin }: JoinRoomProps) {
   // const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [existingPlayer, setExistingPlayer] = useState<any>(null);
+  const [showRejoinOption, setShowRejoinOption] = useState(false);
+  const [lastRoom, setLastRoom] = useState<string | null>(null);
+  const [autoRejoinPlayer, setAutoRejoinPlayer] = useState<any>(null);
 
   const getDeviceId = (): string => {
     let deviceId = localStorage.getItem('imposter_device_id');
@@ -27,6 +31,133 @@ export function JoinRoom({ onJoin }: JoinRoomProps) {
       localStorage.setItem('imposter_device_id', deviceId);
     }
     return deviceId;
+  };
+
+  const checkForLastRoom = async () => {
+    const lastRoomCode = localStorage.getItem('imposter_last_room');
+    if (!lastRoomCode) return;
+
+    try {
+      const deviceId = getDeviceId();
+      
+      // Check if this device has a player in the last room
+      const { data: roomData } = await supabase
+        .from('rooms')
+        .select('id')
+        .eq('code', lastRoomCode)
+        .single();
+
+      if (!roomData) return;
+
+      const { data: playerData } = await supabase
+        .from('players')
+        .select('id, name, avatar, is_host, room_id')
+        .eq('device_id', deviceId)
+        .eq('room_id', roomData.id)
+        .single();
+
+      if (playerData) {
+        setLastRoom(lastRoomCode);
+        setAutoRejoinPlayer(playerData);
+        setRoomCode(lastRoomCode);
+        setName(playerData.name);
+        setAvatar(playerData.avatar);
+      }
+    } catch (err) {
+      console.log('No last room found or room no longer exists');
+    }
+  };
+
+  // Check for last room on component mount
+  useEffect(() => {
+    checkForLastRoom();
+  }, []);
+
+  const checkForExistingPlayer = async (roomCode: string) => {
+    if (!roomCode || roomCode.length !== 6) {
+      setExistingPlayer(null);
+      setShowRejoinOption(false);
+      return;
+    }
+
+    try {
+      const deviceId = getDeviceId();
+      
+      // Check if this device has previously joined this room
+      const { data, error } = await supabase
+        .from('players')
+        .select('id, name, avatar, is_host, room_id')
+        .eq('device_id', deviceId)
+        .eq('room_id', (await supabase
+          .from('rooms')
+          .select('id')
+          .eq('code', roomCode.toUpperCase())
+          .single()
+        ).data?.id);
+
+      if (error || !data || data.length === 0) {
+        setExistingPlayer(null);
+        setShowRejoinOption(false);
+        return;
+      }
+
+      const player = data[0];
+      setExistingPlayer(player);
+      setShowRejoinOption(true);
+      
+      // Pre-fill the form with existing player data
+      setName(player.name);
+      setAvatar(player.avatar);
+      
+    } catch (err) {
+      console.log('No existing player found for this room');
+      setExistingPlayer(null);
+      setShowRejoinOption(false);
+    }
+  };
+
+  const handleRoomCodeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newRoomCode = e.target.value.toUpperCase();
+    setRoomCode(newRoomCode);
+    checkForExistingPlayer(newRoomCode);
+  };
+
+  const handleRejoin = async () => {
+    if (!existingPlayer) return;
+    
+    setLoading(true);
+    setError('');
+
+    try {
+      const deviceId = getDeviceId();
+      
+      const { data, error: joinError } = await supabase.rpc('join_room', {
+        p_room_code: roomCode.toUpperCase(),
+        p_name: existingPlayer.name,
+        p_avatar: existingPlayer.avatar,
+        p_device_id: deviceId
+      });
+
+      if (joinError) throw joinError;
+
+      localStorage.setItem(`imposter_token_${roomCode}`, data.write_token);
+      localStorage.setItem('imposter_last_room', roomCode.toUpperCase());
+      
+      onJoin({
+        playerId: data.player_id,
+        roomId: data.room_id,
+        isHost: data.is_host,
+        writeToken: data.write_token,
+        roomCode: roomCode.toUpperCase(),
+        name: existingPlayer.name,
+        avatar: existingPlayer.avatar
+      });
+
+    } catch (err: any) {
+      setError(err.message || 'Failed to rejoin room');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -49,6 +180,7 @@ export function JoinRoom({ onJoin }: JoinRoomProps) {
       if (joinError) throw joinError;
 
       localStorage.setItem(`imposter_token_${roomCode}`, data.write_token);
+      localStorage.setItem('imposter_last_room', roomCode.toUpperCase());
       
       onJoin({
         playerId: data.player_id,
@@ -133,6 +265,54 @@ export function JoinRoom({ onJoin }: JoinRoomProps) {
                 </p>
               </div>
 
+              {/* Auto-Rejoin Option */}
+              {autoRejoinPlayer && lastRoom && (
+                <div className="mb-6 p-4 bg-blue-500/20 backdrop-blur-md border border-blue-400/30 rounded-2xl text-blue-200">
+                  <div className="flex items-center gap-3 mb-3">
+                    <span className="text-2xl">⚡</span>
+                    <div className="flex-1">
+                      <p className="font-medium">Quick Rejoin Available!</p>
+                      <p className="text-sm text-blue-300/80">
+                        You were last in room {lastRoom} as {autoRejoinPlayer.name}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleRejoin}
+                    disabled={loading}
+                    className="w-full py-3 bg-gradient-to-r from-blue-500 to-cyan-500 text-white font-bold rounded-xl hover:from-blue-600 hover:to-cyan-600 transition-all duration-300 shadow-lg hover:shadow-blue-400/30 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {loading ? (
+                      <div className="flex items-center justify-center gap-2">
+                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                        <span>Rejoining...</span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-center gap-2">
+                        <span>⚡</span>
+                        <span>Quick Rejoin as {autoRejoinPlayer.name}</span>
+                      </div>
+                    )}
+                  </button>
+                  <div className="text-center mt-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAutoRejoinPlayer(null);
+                        setLastRoom(null);
+                        setRoomCode('');
+                        setName('');
+                        setAvatar('🦀');
+                      }}
+                      className="text-blue-300/60 hover:text-blue-300/80 text-sm underline transition-colors"
+                    >
+                      Join a different room
+                    </button>
+                  </div>
+                </div>
+              )}
+
               <form onSubmit={handleSubmit} className="space-y-5">
                 {/* Room Code Section */}
                 <div className="space-y-3">
@@ -143,7 +323,7 @@ export function JoinRoom({ onJoin }: JoinRoomProps) {
                     <input
                       type="text"
                       value={roomCode}
-                      onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
+                      onChange={handleRoomCodeChange}
                       maxLength={6}
                       className="w-full pl-12 pr-6 py-4 bg-white/10 backdrop-blur-md border border-white/20 rounded-full text-white text-center text-xl font-mono uppercase placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-blue-400/50 focus:border-blue-400/50 transition-all duration-300 shadow-lg focus:shadow-xl focus:shadow-blue-400/25 focus:bg-white/15"
                       placeholder="ABCD12"
@@ -165,45 +345,97 @@ export function JoinRoom({ onJoin }: JoinRoomProps) {
                   </div>
                 </div>
 
-                {/* Name Section */}
-                <div className="space-y-2">
-                  <div className="relative">
-                    <div className="absolute left-4 top-1/2 transform -translate-y-1/2 text-white/60 text-lg">
-                      🙂
+                {/* Rejoin Option */}
+                {showRejoinOption && existingPlayer && (
+                  <div className="space-y-3">
+                    <div className="p-4 bg-green-500/20 backdrop-blur-md border border-green-400/30 rounded-2xl text-green-200">
+                      <div className="flex items-center gap-3">
+                        <span className="text-2xl">🔄</span>
+                        <div className="flex-1">
+                          <p className="font-medium">Welcome back, {existingPlayer.name}!</p>
+                          <p className="text-sm text-green-300/80">
+                            You previously joined this room as {existingPlayer.is_host ? 'the host' : 'a player'}
+                          </p>
+                        </div>
+                      </div>
                     </div>
-                    <input
-                      type="text"
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      maxLength={20}
-                      className="w-full pl-12 pr-6 py-4 bg-white/10 backdrop-blur-md border border-white/20 rounded-full text-white text-lg placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-purple-400/50 focus:border-purple-400/50 transition-all duration-300 shadow-lg focus:shadow-xl focus:shadow-purple-400/25 focus:bg-white/15"
-                      placeholder="Enter your name"
-                    />
+                    <button
+                      type="button"
+                      onClick={handleRejoin}
+                      disabled={loading}
+                      className="w-full py-4 bg-gradient-to-r from-green-500 to-emerald-500 text-white font-bold rounded-xl hover:from-green-600 hover:to-emerald-600 transition-all duration-300 shadow-lg hover:shadow-green-400/30 text-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {loading ? (
+                        <div className="flex items-center justify-center gap-2">
+                          <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                          <span>Rejoining...</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-center gap-2">
+                          <span>🔄</span>
+                          <span>Rejoin as {existingPlayer.name}</span>
+                        </div>
+                      )}
+                    </button>
+                    <div className="text-center">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowRejoinOption(false);
+                          setName('');
+                          setAvatar('🦀');
+                        }}
+                        className="text-white/60 hover:text-white/80 text-sm underline transition-colors"
+                      >
+                        Join with different name
+                      </button>
+                    </div>
                   </div>
-                </div>
+                )}
 
-                {/* Avatar Section */}
-                <div className="space-y-4">
-                  <div className="text-center">
-                    <p className="text-white/80 text-sm mb-4">Choose your avatar</p>
-                    <div className="flex gap-3 overflow-x-auto py-6 scrollbar-hide px-8 w-full max-w-4xl mx-auto">
-                      {EMOJI_OPTIONS.map((emoji) => (
-                        <button
-                          key={emoji}
-                          type="button"
-                          onClick={() => setAvatar(emoji)}
-                          className={`flex-shrink-0 w-10 h-10 bg-white/10 backdrop-blur-sm rounded-full border-2 flex items-center justify-center text-xl transition-all duration-300 hover:scale-110 hover:bg-white/20 hover:animate-jiggle shadow-lg hover:shadow-xl hover:shadow-blue-400/20 ${
-                            avatar === emoji 
-                              ? 'border-white/90 bg-white/30 scale-125 shadow-2xl ring-4 ring-blue-400/60 ring-opacity-50 animate-bounce' 
-                              : 'border-white/20 hover:border-white/50'
-                          }`}
-                        >
-                          {emoji}
-                        </button>
-                      ))}
+                {/* Name Section - Only show if not rejoining */}
+                {!showRejoinOption && (
+                  <div className="space-y-2">
+                    <div className="relative">
+                      <div className="absolute left-4 top-1/2 transform -translate-y-1/2 text-white/60 text-lg">
+                        🙂
+                      </div>
+                      <input
+                        type="text"
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        maxLength={20}
+                        className="w-full pl-12 pr-6 py-4 bg-white/10 backdrop-blur-md border border-white/20 rounded-full text-white text-lg placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-purple-400/50 focus:border-purple-400/50 transition-all duration-300 shadow-lg focus:shadow-xl focus:shadow-purple-400/25 focus:bg-white/15"
+                        placeholder="Enter your name"
+                      />
                     </div>
                   </div>
-                </div>
+                )}
+
+                {/* Avatar Section - Only show if not rejoining */}
+                {!showRejoinOption && (
+                  <div className="space-y-4">
+                    <div className="text-center">
+                      <p className="text-white/80 text-sm mb-4">Choose your avatar</p>
+                      <div className="flex gap-3 overflow-x-auto py-6 scrollbar-hide px-8 w-full max-w-4xl mx-auto">
+                        {EMOJI_OPTIONS.map((emoji) => (
+                          <button
+                            key={emoji}
+                            type="button"
+                            onClick={() => setAvatar(emoji)}
+                            className={`flex-shrink-0 w-10 h-10 bg-white/10 backdrop-blur-sm rounded-full border-2 flex items-center justify-center text-xl transition-all duration-300 hover:scale-110 hover:bg-white/20 hover:animate-jiggle shadow-lg hover:shadow-xl hover:shadow-blue-400/20 ${
+                              avatar === emoji 
+                                ? 'border-white/90 bg-white/30 scale-125 shadow-2xl ring-4 ring-blue-400/60 ring-opacity-50' 
+                                : 'border-white/20 hover:border-white/50'
+                            }`}
+                          >
+                            {emoji}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Error Message */}
                 {error && (
@@ -215,12 +447,13 @@ export function JoinRoom({ onJoin }: JoinRoomProps) {
                   </div>
                 )}
 
-                {/* Join Button - The Star */}
-                <button
-                  type="submit"
-                  disabled={loading || !roomCode || !name}
-                  className="w-full py-6 bg-gradient-to-r from-blue-200 via-purple-200 to-pink-200 hover:from-blue-100 hover:via-purple-100 hover:to-pink-100 text-white font-bold text-xl rounded-full shadow-2xl hover:shadow-3xl hover:shadow-blue-400/30 transition-all duration-300 hover:scale-105 disabled:opacity-50 disabled:scale-100 disabled:shadow-none relative overflow-hidden group"
-                >
+                {/* Join Button - The Star - Only show if not rejoining */}
+                {!showRejoinOption && (
+                  <button
+                    type="submit"
+                    disabled={loading || !roomCode || !name}
+                    className="w-full py-6 bg-gradient-to-r from-blue-200 via-purple-200 to-pink-200 hover:from-blue-100 hover:via-purple-100 hover:to-pink-100 text-white font-bold text-xl rounded-full shadow-2xl hover:shadow-3xl hover:shadow-blue-400/30 transition-all duration-300 hover:scale-105 disabled:opacity-50 disabled:scale-100 disabled:shadow-none relative overflow-hidden group"
+                  >
                   {/* Pressed Glass Effect */}
                   <div className="absolute inset-0 bg-gradient-to-b from-white/30 via-transparent to-transparent rounded-full"></div>
                   
@@ -243,7 +476,8 @@ export function JoinRoom({ onJoin }: JoinRoomProps) {
                       'Join the Game'
                     )}
                   </span>
-                </button>
+                  </button>
+                )}
               </form>
             </div>
             </div>

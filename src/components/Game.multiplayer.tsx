@@ -68,8 +68,19 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
             room_id: playerData.roomId,
             current_phase: 'role',
             topic: {
+              id: 1,
               category: 'Animals',
-              words: ['Lion', 'Tiger', 'Elephant', 'Giraffe', 'Monkey', 'Zebra', 'Hippo', 'Rhino'],
+              topic: 'Animals',
+              word1: 'Lion',
+              word2: 'Tiger',
+              word3: 'Elephant',
+              word4: 'Giraffe',
+              word5: 'Monkey',
+              word6: 'Zebra',
+              word7: 'Hippo',
+              word8: 'Rhino',
+              family_safe: true,
+              secret_word_index: 1,
               secret_word: 'Lion'
             },
             players: [
@@ -183,7 +194,7 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
   if (currentPhase === 'role') {
     return (
       <div className="min-h-screen bg-gradient-to-br from-red-900 via-orange-900 to-yellow-900 flex items-center justify-center p-4">
-        <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-3xl p-8 max-w-2xl w-full text-center" style={{boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.2)'}}>
+        <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-3xl p-8 max-w-4xl w-full text-center" style={{boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.2)'}}>
           <div className="text-6xl mb-6">🎭</div>
           <h1 className="text-4xl font-bold text-white mb-4">Role Reveal</h1>
           <p className="text-white/80 mb-8">Your secret role has been assigned!</p>
@@ -191,14 +202,52 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
           <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-2xl p-6 mb-8">
             <h2 className="text-2xl font-bold text-white mb-4">Your Role</h2>
             <div className="text-6xl mb-4">🕵️</div>
-            <p className="text-xl text-white font-semibold">Detective</p>
-            <p className="text-white/70 mt-2">Find the imposter by asking questions!</p>
+            <p className="text-xl text-white font-semibold">Crew</p>
+            <p className="text-white/70 mt-2">Find the Chameleon by asking questions!</p>
           </div>
 
-          <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-2xl p-6 mb-8">
-            <h2 className="text-2xl font-bold text-white mb-4">Topic</h2>
-            <p className="text-xl text-white font-semibold">{gameState.topic?.category || 'Animals'}</p>
-            <p className="text-white/70 mt-2">Secret word: {gameState.topic?.secret_word || 'Lion'}</p>
+          {/* Topic Card with 8 words */}
+          <div className="bg-white rounded-2xl shadow-2xl p-6 mb-8">
+            <div className="text-center mb-6">
+              <h2 className="text-3xl font-bold text-gray-800 mb-2">{gameState.topic?.category || 'Animals'}</h2>
+              <div className="text-sm text-gray-500 mb-4">
+                <span className="text-blue-600 font-medium">👥 You are CREW</span>
+              </div>
+              <div className="bg-gradient-to-r from-blue-100 to-purple-100 rounded-xl p-3 mb-4">
+                <p className="text-sm text-gray-700">
+                  <span className="font-semibold">Secret Word:</span> <span className="font-bold text-blue-700">{gameState.topic?.secret_word || 'Lion'}</span>
+                </p>
+                <p className="text-xs text-gray-600 mt-1">
+                  Give clues about this word without being too obvious!
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              {[1,2,3,4,5,6,7,8].map((index) => {
+                const word = gameState.topic?.[`word${index}`];
+                const isSecret = index === gameState.topic?.secret_word_index;
+                const shouldHighlight = isSecret;
+                
+                return (
+                  <div
+                    key={index}
+                    className={`
+                      p-4 rounded-xl text-center font-medium text-lg border-2 transition-all
+                      ${shouldHighlight 
+                        ? 'bg-gradient-to-r from-blue-500 to-purple-600 text-white border-blue-400 shadow-lg transform scale-105' 
+                        : 'bg-gray-50 text-gray-800 border-gray-200 hover:bg-gray-100'
+                      }
+                    `}
+                  >
+                    {word || '???'}
+                    {shouldHighlight && (
+                      <div className="text-xs mt-1 opacity-90">SECRET</div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
           <button

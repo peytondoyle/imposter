@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { JoinRoom } from './components/JoinRoom.beautiful';
-import { Lobby } from './components/Lobby.realtime';
-import { Game } from './components/Game.multiplayer.improved';
+import { Lobby } from './components/Lobby.beautiful';
+import { Game } from './components/Game.multiplayer';
 import { supabase } from './lib/supabase';
 
 function App() {
@@ -16,8 +16,6 @@ function App() {
   useEffect(() => {
     if (!playerData) return;
 
-    console.log('Setting up room status subscription for room:', playerData.roomId);
-
     // Subscribe to room status changes
     const channel = supabase
       .channel(`room-status-${playerData.roomId}`)
@@ -27,31 +25,24 @@ function App() {
         table: 'rooms',
         filter: `id=eq.${playerData.roomId}`
       }, (payload) => {
-        console.log('App: Room status update received:', payload.new);
+        console.log('Room status update:', payload);
         if (payload.new.status === 'playing') {
-          console.log('App: Transitioning to game screen');
           setCurrentScreen('game');
         } else if (payload.new.status === 'waiting') {
-          console.log('App: Transitioning to lobby screen');
           setCurrentScreen('lobby');
         }
       })
-      .subscribe((status) => {
-        console.log('Room status subscription status:', status);
-      });
+      .subscribe();
 
     // Check initial room status
     const checkRoomStatus = async () => {
-      console.log('Checking initial room status...');
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from('rooms')
         .select('status')
         .eq('id', playerData.roomId)
         .single();
 
-      console.log('Initial room status:', data?.status, error);
       if (data?.status === 'playing') {
-        console.log('Room is already playing, going to game');
         setCurrentScreen('game');
       }
     };
@@ -59,7 +50,6 @@ function App() {
     checkRoomStatus();
 
     return () => {
-      console.log('Cleaning up room status subscription');
       supabase.removeChannel(channel);
     };
   }, [playerData]);

@@ -1,4 +1,4 @@
--- Seed file for importing topics data
+-- Seed file for importing topics data in Chameleon-style format
 
 -- First, clear existing topics (optional, remove if you want to append)
 -- truncate table topics restart identity cascade;
@@ -9,7 +9,7 @@
 
 -- For Supabase, use the SQL editor to run:
 -- \copy topics (category, topic, word1, word2, word3, word4, word5, word6, word7, word8, family_safe) 
--- FROM 'topics_cards.csv' 
+-- FROM 'topics_cards_500.csv' 
 -- WITH (FORMAT csv, HEADER true);
 
 -- Alternative: If using Supabase Dashboard, you can use the Table Editor import feature

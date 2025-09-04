@@ -12,6 +12,8 @@ CREATE TABLE game_states (
   players JSONB DEFAULT '[]'::jsonb,
   clues JSONB DEFAULT '{}'::jsonb,
   votes JSONB DEFAULT '{}'::jsonb,
+  imposter_id UUID,
+  is_active BOOLEAN DEFAULT true,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
