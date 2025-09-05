@@ -677,6 +677,23 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
                   );
                 })}
               </div>
+
+              {/* Manual continue button for host when all players have submitted */}
+              {playerData.isHost && (() => {
+                const allSubmitted = gameState.players?.every((p: Player) => 
+                  gameState.clues?.[p.id] !== undefined
+                );
+                return allSubmitted ? (
+                  <div className="mt-8">
+                    <button
+                      onClick={() => updateGamePhase('voting')}
+                      className="w-full py-4 bg-gradient-to-r from-purple-500 to-pink-500 text-white font-bold rounded-xl hover:from-purple-600 hover:to-pink-600 transition-all duration-300 shadow-lg hover:shadow-purple-400/30 text-lg"
+                    >
+                      Continue to Voting Phase
+                    </button>
+                  </div>
+                ) : null;
+              })()}
             </div>
           )}
         </div>
@@ -749,6 +766,23 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
                   );
                 })}
               </div>
+
+              {/* Manual continue button for host when all players have voted */}
+              {playerData.isHost && (() => {
+                const allVoted = gameState.players?.every((p: Player) => 
+                  gameState.votes?.[p.id] !== undefined
+                );
+                return allVoted ? (
+                  <div className="mt-8">
+                    <button
+                      onClick={() => updateGamePhase('results')}
+                      className="w-full py-4 bg-gradient-to-r from-green-500 to-emerald-500 text-white font-bold rounded-xl hover:from-green-600 hover:to-emerald-600 transition-all duration-300 shadow-lg hover:shadow-green-400/30 text-lg"
+                    >
+                      Show Results
+                    </button>
+                  </div>
+                ) : null;
+              })()}
             </div>
           )}
         </div>
