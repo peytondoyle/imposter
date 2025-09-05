@@ -150,11 +150,18 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
       setError('');
       
       // Find current player
+      console.log('Looking for player with ID:', playerData.playerId);
+      console.log('Available players:', playersData?.map(p => ({ id: p.id, name: p.name })));
+      
       const player = playersData?.find((p: any) => p.id === playerData.playerId);
       setCurrentPlayer(player || null);
       
       if (!player) {
         console.warn('Current player not found in players list');
+        console.warn('Player ID mismatch - looking for:', playerData.playerId);
+        console.warn('Available player IDs:', playersData?.map(p => p.id));
+      } else {
+        console.log('Found current player:', player);
       }
       
       setLoading(false);

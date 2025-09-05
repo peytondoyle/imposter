@@ -23,7 +23,7 @@ SELECT
   t.topic
 FROM rounds r
 LEFT JOIN topics t ON r.topic_id = t.id
-ORDER BY r.created_at DESC
+ORDER BY r.started_at DESC
 LIMIT 5;
 
 -- Step 4: Check if clues table is working
