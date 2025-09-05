@@ -467,7 +467,16 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
     console.log('gameState:', gameState);
     console.log('currentPlayer:', currentPlayer);
     console.log('topic:', gameState?.topic);
+    console.log('secret_word_index:', gameState?.secret_word_index);
+    
     const isImposter = currentPlayer.role === 'imposter';
+    
+    // Calculate the secret word from the topic and secret_word_index
+    const secretWord = gameState?.topic && gameState?.secret_word_index 
+      ? gameState.topic[`word${gameState.secret_word_index}` as keyof typeof gameState.topic] as string
+      : '???';
+    
+    console.log('Calculated secret word:', secretWord);
     
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 flex items-center justify-center p-4">
@@ -502,7 +511,7 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
               {!isImposter && (
                 <div className="bg-gradient-to-r from-blue-100 to-purple-100 rounded-xl p-3 mb-4">
                   <p className="text-sm text-gray-700">
-                    <span className="font-semibold">Secret Word:</span> <span className="font-bold text-blue-700">{gameState.topic?.secret_word || '???'}</span>
+                    <span className="font-semibold">Secret Word:</span> <span className="font-bold text-blue-700">{secretWord}</span>
                   </p>
                   <p className="text-xs text-gray-600 mt-1">
                     Give clues about this word without being too obvious!
@@ -514,7 +523,7 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
             <div className="grid grid-cols-2 gap-3">
               {[1,2,3,4,5,6,7,8].map((index) => {
                 const word = gameState.topic?.[`word${index}`];
-                const isSecret = index === gameState.topic?.secret_word_index;
+                const isSecret = index === gameState?.secret_word_index;
                 const shouldHighlight = !isImposter && isSecret;
                 
                 return (
