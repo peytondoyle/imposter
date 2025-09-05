@@ -79,6 +79,7 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
       }
 
       // Get players in the room
+      console.log('Fetching players for room:', playerData.roomId);
       const { data: playersData, error: playersError } = await supabase
         .from('players')
         .select('*')
@@ -90,8 +91,10 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
         setError('Failed to load players');
         return;
       }
+      console.log('Players fetched successfully:', playersData?.length, 'players');
 
       // Get clues for this round
+      console.log('Fetching clues for round:', roundData.id);
       const { data: cluesData, error: cluesError } = await supabase
         .from('clues')
         .select('*')
@@ -102,8 +105,10 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
         setError('Failed to load clues');
         return;
       }
+      console.log('Clues fetched successfully:', cluesData?.length, 'clues');
 
       // Get votes for this round
+      console.log('Fetching votes for round:', roundData.id);
       const { data: votesData, error: votesError } = await supabase
         .from('votes')
         .select('*')
@@ -114,6 +119,7 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
         setError('Failed to load votes');
         return;
       }
+      console.log('Votes fetched successfully:', votesData?.length, 'votes');
 
       // Convert clues and votes to the format expected by the UI
       const clues: { [key: string]: string } = {};
