@@ -49,42 +49,110 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
     try {
       console.log('Refreshing game state for room:', playerData.roomId);
       
-      const { data, error } = await supabase
-        .from('game_states')
-        .select('*')
+      // Get current round data
+      const { data: roundData, error: roundError } = await supabase
+        .from('rounds')
+        .select(`
+          *,
+          topics (
+            id, category, topic, word1, word2, word3, word4, word5, word6, word7, word8, family_safe
+          )
+        `)
         .eq('room_id', playerData.roomId)
-        .eq('is_active', true)
-        .order('created_at', { ascending: false })
+        .order('round_number', { ascending: false })
         .limit(1)
         .maybeSingle();
 
-      if (error && error.code !== 'PGRST116') {
-        // PGRST116 means no rows returned, which is ok
-        console.error('Error fetching game state:', error);
-        setError('Failed to load game state');
+      if (roundError && roundError.code !== 'PGRST116') {
+        console.error('Error fetching round data:', roundError);
+        setError('Failed to load round data');
         return;
       }
 
-      console.log('Game state refreshed:', data);
-      
-      if (data) {
-        console.log('Setting game state:', data);
-        console.log('Setting current phase to:', data.current_phase || 'role');
-        setGameState(data);
-        setCurrentPhase(data.current_phase || 'role');
-        setError('');
-        
-        // Find current player in game state
-        const player = data.players?.find((p: any) => p.id === playerData.playerId);
-        setCurrentPlayer(player || null);
-        
-        if (!player) {
-          console.warn('Current player not found in game state');
-        }
-      } else {
-        // No active game state found
+      if (!roundData) {
+        console.log('No active round found');
         setGameState(null);
         setCurrentPlayer(null);
+        setLoading(false);
+        return;
+      }
+
+      // Get players in the room
+      const { data: playersData, error: playersError } = await supabase
+        .from('players')
+        .select('*')
+        .eq('room_id', playerData.roomId)
+        .order('joined_at');
+
+      if (playersError) {
+        console.error('Error fetching players:', playersError);
+        setError('Failed to load players');
+        return;
+      }
+
+      // Get clues for this round
+      const { data: cluesData, error: cluesError } = await supabase
+        .from('clues')
+        .select('*')
+        .eq('round_id', roundData.id);
+
+      if (cluesError) {
+        console.error('Error fetching clues:', cluesError);
+        setError('Failed to load clues');
+        return;
+      }
+
+      // Get votes for this round
+      const { data: votesData, error: votesError } = await supabase
+        .from('votes')
+        .select('*')
+        .eq('round_id', roundData.id);
+
+      if (votesError) {
+        console.error('Error fetching votes:', votesError);
+        setError('Failed to load votes');
+        return;
+      }
+
+      // Convert clues and votes to the format expected by the UI
+      const clues: { [key: string]: string } = {};
+      const votes: { [key: string]: string } = {};
+      
+      cluesData?.forEach(clue => {
+        clues[clue.player_id] = clue.word;
+      });
+      
+      votesData?.forEach(vote => {
+        votes[vote.voter_id] = vote.target_id;
+      });
+
+      // Create game state object in the expected format
+      const gameStateData = {
+        id: roundData.id,
+        room_id: playerData.roomId,
+        current_phase: roundData.phase,
+        topic: roundData.topics,
+        secret_word_index: roundData.secret_word_index,
+        imposter_id: roundData.imposter_id,
+        players: playersData || [],
+        clues: clues,
+        votes: votes,
+        is_active: true
+      };
+
+      console.log('Game state refreshed:', gameStateData);
+      console.log('Setting current phase to:', roundData.phase);
+      
+      setGameState(gameStateData);
+      setCurrentPhase(roundData.phase as any);
+      setError('');
+      
+      // Find current player
+      const player = playersData?.find((p: any) => p.id === playerData.playerId);
+      setCurrentPlayer(player || null);
+      
+      if (!player) {
+        console.warn('Current player not found in players list');
       }
       
       setLoading(false);
@@ -105,12 +173,38 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
         { 
           event: '*', 
           schema: 'public', 
-          table: 'game_states', 
+          table: 'rounds', 
           filter: `room_id=eq.${playerData.roomId}` 
         },
         (payload) => {
-          console.log('Game state changed via realtime:', payload);
-          console.log('New phase from realtime:', (payload.new as any)?.current_phase);
+          console.log('Round changed via realtime:', payload);
+          console.log('New phase from realtime:', (payload.new as any)?.phase);
+          refreshGameState();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { 
+          event: '*', 
+          schema: 'public', 
+          table: 'clues', 
+          filter: `round_id=eq.${playerData.roomId}` 
+        },
+        (payload) => {
+          console.log('Clue changed via realtime:', payload);
+          refreshGameState();
+        }
+      )
+      .on(
+        'postgres_changes',
+        { 
+          event: '*', 
+          schema: 'public', 
+          table: 'votes', 
+          filter: `round_id=eq.${playerData.roomId}` 
+        },
+        (payload) => {
+          console.log('Vote changed via realtime:', payload);
           refreshGameState();
         }
       )
@@ -161,14 +255,8 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
         return;
       }
 
-      // Check if game state exists using safe query
+      // Refresh game state to get current round data
       await refreshGameState();
-      
-      // If no game state exists and user is host, create one
-      if (!gameState && playerData.isHost) {
-        console.log('Host creating new game state...');
-        await createNewGame(playersData);
-      }
       
     } catch (error) {
       console.error('Error initializing game:', error);
@@ -177,151 +265,7 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
     }
   };
 
-  const createNewGame = async (playersData: any[]) => {
-    try {
-      console.log('Creating new game with players:', playersData);
-      
-      // Get random topic from Supabase (fallback approach)
-      const { data: allTopics, error: topicsError } = await supabase
-        .from('topics')
-        .select('*')
-        .eq('family_safe', true);
-      
-      if (topicsError || !allTopics || allTopics.length === 0) {
-        console.error('Error fetching topics:', topicsError);
-        setError('Failed to load game topic');
-        return;
-      }
-      
-      // Pick random topic from the results
-      const topicData = allTopics[Math.floor(Math.random() * allTopics.length)];
 
-      if (!topicData) {
-        console.error('No topic data available');
-        setError('Failed to load game topic');
-        return;
-      }
-
-      // Pick random secret word index (1-8)
-      const secretWordIndex = Math.floor(Math.random() * 8) + 1;
-      const secretWord = topicData[`word${secretWordIndex}` as keyof typeof topicData] as string;
-      
-      // Randomly assign one imposter
-      const imposterIndex = Math.floor(Math.random() * playersData.length);
-      
-      // Create player objects with roles
-      const gamePlayers = playersData.map((p, index) => ({
-        id: p.id,
-        name: p.name,
-        avatar: p.avatar || '🎭',
-        role: index === imposterIndex ? 'imposter' : 'detective' as 'detective' | 'imposter'
-      }));
-
-      console.log('Game players:', gamePlayers);
-
-      // Create the game state with UPSERT logic
-      const newGameState = {
-        room_id: playerData.roomId,
-        current_phase: 'role',
-        is_active: true,
-        topic: {
-          id: topicData.id,
-          category: topicData.category,
-          topic: topicData.topic,
-          word1: topicData.word1,
-          word2: topicData.word2,
-          word3: topicData.word3,
-          word4: topicData.word4,
-          word5: topicData.word5,
-          word6: topicData.word6,
-          word7: topicData.word7,
-          word8: topicData.word8,
-          family_safe: topicData.family_safe,
-          secret_word_index: secretWordIndex,
-          secret_word: secretWord
-        },
-        players: gamePlayers,
-        clues: {},
-        votes: {},
-        imposter_id: gamePlayers[imposterIndex].id
-      };
-
-      console.log('Creating game state:', newGameState);
-
-      // First, mark any existing active game as inactive
-      await supabase
-        .from('game_states')
-        .update({ is_active: false })
-        .eq('room_id', playerData.roomId)
-        .eq('is_active', true);
-
-      // Then insert the new game state
-      const { data: inserted, error } = await supabase
-        .from('game_states')
-        .insert(newGameState)
-        .select()
-        .single();
-
-      if (error) {
-        console.error('Error creating game state:', error);
-        setError('Failed to create game');
-        return;
-      }
-
-      console.log('Game state created:', inserted);
-
-      if (inserted) {
-        // Refresh game state to get the latest data
-        await refreshGameState();
-      }
-      
-    } catch (error) {
-      console.error('Error in createNewGame:', error);
-      setError('Failed to create new game');
-    }
-  };
-
-  const updateGamePhase = async (newPhase: string) => {
-    if (!gameState) return;
-    
-    try {
-      console.log('Updating game phase to:', newPhase, 'for room:', playerData.roomId);
-      
-      const { data, error } = await supabase
-        .from('game_states')
-        .update({ 
-          current_phase: newPhase
-        })
-        .eq('room_id', playerData.roomId)
-        .eq('is_active', true)
-        .select()
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (error) {
-        console.error('Error updating game phase:', error);
-        setError('Failed to update game phase');
-      } else {
-        console.log('Game phase updated successfully:', data);
-        // The realtime subscription will handle the state update
-        // But let's also manually refresh to ensure UI updates
-        setTimeout(() => {
-          console.log('Manually refreshing game state after phase update');
-          refreshGameState();
-        }, 100);
-        
-        // Also trigger a refresh after a longer delay to catch any missed updates
-        setTimeout(() => {
-          console.log('Secondary refresh after phase update');
-          refreshGameState();
-        }, 1000);
-      }
-    } catch (error) {
-      console.error('Error updating game phase:', error);
-      setError('Network error during phase update');
-    }
-  };
 
   const handleClueSubmit = async () => {
     if (!clue.trim() || !gameState) return;
@@ -410,23 +354,20 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
     if (!playerData.isHost || !gameState) return;
 
     try {
-      // Mark current game as inactive
-      await supabase
-        .from('game_states')
-        .update({ is_active: false })
-        .eq('room_id', playerData.roomId)
-        .eq('is_active', true);
+      // Start a new round using the RPC function
+      const { error } = await supabase.rpc('start_round', {
+        p_room_id: playerData.roomId,
+        p_write_token: playerData.writeToken || ''
+      });
 
-      // Get all players and create new game
-      const { data: playersData } = await supabase
-        .from('players')
-        .select('*')
-        .eq('room_id', playerData.roomId)
-        .order('joined_at');
-
-      if (playersData && playersData.length > 0) {
-        await createNewGame(playersData);
+      if (error) {
+        console.error('Error starting new round:', error);
+        setError('Failed to start new round');
+        return;
       }
+
+      // Refresh game state to get the new round data
+      await refreshGameState();
     } catch (error) {
       console.error('Error resetting game:', error);
       setError('Failed to reset game');
@@ -603,7 +544,29 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
           {playerData.isHost && (
             <div className="space-y-3">
               <button
-                onClick={() => updateGamePhase('clue')}
+                onClick={async () => {
+                  try {
+                    // Get current round ID
+                    const { data: roundData } = await supabase
+                      .from('rounds')
+                      .select('id')
+                      .eq('room_id', playerData.roomId)
+                      .order('round_number', { ascending: false })
+                      .limit(1)
+                      .single();
+                    
+                    if (roundData) {
+                      await supabase.rpc('advance_phase', {
+                        p_round_id: roundData.id,
+                        p_write_token: playerData.writeToken || ''
+                      });
+                      await refreshGameState();
+                    }
+                  } catch (error) {
+                    console.error('Error advancing phase:', error);
+                    setError('Failed to advance phase');
+                  }
+                }}
                 className="w-full py-4 bg-gradient-to-r from-blue-500 to-purple-500 text-white font-bold rounded-xl hover:from-blue-600 hover:to-purple-600 transition-all"
               >
                 Start Clue Phase
