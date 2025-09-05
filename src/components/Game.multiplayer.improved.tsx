@@ -70,7 +70,8 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
       }
 
       if (!roundData) {
-        console.log('No active round found');
+        console.log('No active round found - checking if we need to start one');
+        // If no round exists and user is host, they should start a round from the lobby
         setGameState(null);
         setCurrentPlayer(null);
         setLoading(false);
@@ -140,7 +141,8 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
         is_active: true
       };
 
-      console.log('Game state refreshed:', gameStateData);
+      console.log('Game state refreshed from ROUNDS table:', gameStateData);
+      console.log('Round ID:', roundData.id, 'Phase:', roundData.phase);
       console.log('Setting current phase to:', roundData.phase);
       
       setGameState(gameStateData);

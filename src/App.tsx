@@ -76,7 +76,7 @@ function App() {
         .update({ status: 'waiting' })
         .eq('id', playerData.roomId);
       
-      // Delete the game state
+      // Clean up any old game_states records (legacy system)
       await supabase
         .from('game_states')
         .delete()
