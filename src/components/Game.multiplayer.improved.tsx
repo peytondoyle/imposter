@@ -616,6 +616,11 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
   if (currentPhase === 'clue') {
     const hasSubmittedClue = gameState.clues?.[playerData.playerId] !== undefined;
     
+    // Calculate the secret word from the topic and secret_word_index
+    const secretWord = gameState?.topic && gameState?.secret_word_index 
+      ? gameState.topic[`word${gameState.secret_word_index}` as keyof typeof gameState.topic] as string
+      : '???';
+    
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-900 via-purple-900 to-indigo-900 flex items-center justify-center p-4">
         <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-3xl p-8 max-w-2xl w-full">
@@ -629,7 +634,7 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
               Topic: {gameState.topic?.category || 'Mystery'}
             </h2>
             {currentPlayer?.role !== 'imposter' && (
-              <p className="text-white/70">Secret word: {gameState.topic?.secret_word || '???'}</p>
+              <p className="text-white/70">Secret word: {secretWord}</p>
             )}
             {currentPlayer?.role === 'imposter' && (
               <p className="text-orange-300">You're the imposter! Give a convincing clue.</p>
