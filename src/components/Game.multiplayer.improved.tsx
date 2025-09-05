@@ -327,32 +327,37 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
     if (!clue.trim() || !gameState) return;
 
     try {
-      // Get current clues and add new one
-      const currentClues = gameState.clues || {};
-      currentClues[playerData.playerId] = clue;
-
-      const { error } = await supabase
-        .from('game_states')
-        .update({ 
-          clues: currentClues
-        })
+      // Get current round ID
+      const { data: roundData } = await supabase
+        .from('rounds')
+        .select('id')
         .eq('room_id', playerData.roomId)
-        .eq('is_active', true);
-
+        .order('round_number', { ascending: false })
+        .limit(1)
+        .single();
+      
+      if (!roundData) {
+        setError('No active round found');
+        return;
+      }
+      
+      // Submit clue using RPC function
+      const { error } = await supabase.rpc('submit_clue', {
+        p_round_id: roundData.id,
+        p_player_id: playerData.playerId,
+        p_word: clue.trim(),
+        p_write_token: playerData.writeToken || ''
+      });
+      
       if (error) {
         console.error('Error submitting clue:', error);
         setError('Failed to submit clue');
         return;
       }
-
-      // Check if all players have submitted clues
-      const allPlayersSubmitted = gameState.players?.every((p: Player) => 
-        currentClues[p.id] !== undefined
-      );
-
-      if (allPlayersSubmitted && playerData.isHost) {
-        await updateGamePhase('voting');
-      }
+      
+      setClue('');
+      // Refresh game state to show updated clues
+      await refreshGameState();
     } catch (error) {
       console.error('Error submitting clue:', error);
       setError('Network error while submitting clue');
@@ -365,31 +370,36 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
     setSelectedVote(targetId);
     
     try {
-      const currentVotes = gameState.votes || {};
-      currentVotes[playerData.playerId] = targetId;
-
-      const { error } = await supabase
-        .from('game_states')
-        .update({ 
-          votes: currentVotes
-        })
+      // Get current round ID
+      const { data: roundData } = await supabase
+        .from('rounds')
+        .select('id')
         .eq('room_id', playerData.roomId)
-        .eq('is_active', true);
-
+        .order('round_number', { ascending: false })
+        .limit(1)
+        .single();
+      
+      if (!roundData) {
+        setError('No active round found');
+        return;
+      }
+      
+      // Submit vote using RPC function
+      const { error } = await supabase.rpc('cast_vote', {
+        p_round_id: roundData.id,
+        p_voter_id: playerData.playerId,
+        p_target_id: targetId,
+        p_write_token: playerData.writeToken || ''
+      });
+      
       if (error) {
         console.error('Error submitting vote:', error);
         setError('Failed to submit vote');
         return;
       }
-
-      // Check if all players have voted
-      const allPlayersVoted = gameState.players?.every((p: Player) => 
-        currentVotes[p.id] !== undefined
-      );
-
-      if (allPlayersVoted && playerData.isHost) {
-        await updateGamePhase('results');
-      }
+      
+      // Refresh game state to show updated votes
+      await refreshGameState();
     } catch (error) {
       console.error('Error voting:', error);
       setError('Network error while voting');
@@ -686,7 +696,29 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
                 return allSubmitted ? (
                   <div className="mt-8">
                     <button
-                      onClick={() => updateGamePhase('voting')}
+                      onClick={async () => {
+                        try {
+                          // Get current round ID
+                          const { data: roundData } = await supabase
+                            .from('rounds')
+                            .select('id')
+                            .eq('room_id', playerData.roomId)
+                            .order('round_number', { ascending: false })
+                            .limit(1)
+                            .single();
+                          
+                          if (roundData) {
+                            await supabase.rpc('advance_phase', {
+                              p_round_id: roundData.id,
+                              p_write_token: playerData.writeToken || ''
+                            });
+                            await refreshGameState();
+                          }
+                        } catch (error) {
+                          console.error('Error advancing phase:', error);
+                          setError('Failed to advance phase');
+                        }
+                      }}
                       className="w-full py-4 bg-gradient-to-r from-purple-500 to-pink-500 text-white font-bold rounded-xl hover:from-purple-600 hover:to-pink-600 transition-all duration-300 shadow-lg hover:shadow-purple-400/30 text-lg"
                     >
                       Continue to Voting Phase
@@ -775,7 +807,29 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
                 return allVoted ? (
                   <div className="mt-8">
                     <button
-                      onClick={() => updateGamePhase('results')}
+                      onClick={async () => {
+                        try {
+                          // Get current round ID
+                          const { data: roundData } = await supabase
+                            .from('rounds')
+                            .select('id')
+                            .eq('room_id', playerData.roomId)
+                            .order('round_number', { ascending: false })
+                            .limit(1)
+                            .single();
+                          
+                          if (roundData) {
+                            await supabase.rpc('advance_phase', {
+                              p_round_id: roundData.id,
+                              p_write_token: playerData.writeToken || ''
+                            });
+                            await refreshGameState();
+                          }
+                        } catch (error) {
+                          console.error('Error advancing phase:', error);
+                          setError('Failed to advance phase');
+                        }
+                      }}
                       className="w-full py-4 bg-gradient-to-r from-green-500 to-emerald-500 text-white font-bold rounded-xl hover:from-green-600 hover:to-emerald-600 transition-all duration-300 shadow-lg hover:shadow-green-400/30 text-lg"
                     >
                       Show Results
