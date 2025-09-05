@@ -179,19 +179,19 @@ export function Lobby({ playerData, onGameStart, onLeave }: LobbyProps) {
     setError('');
 
     try {
-      console.log('Updating room status to playing...');
-      // Update room status to playing
-      const { error: updateError } = await supabase
-        .from('rooms')
-        .update({ status: 'playing' })
-        .eq('id', playerData.roomId);
+      console.log('Starting round with RPC function...');
+      // Start a new round using the RPC function
+      const { error: startError } = await supabase.rpc('start_round', {
+        p_room_id: playerData.roomId,
+        p_write_token: playerData.writeToken,
+      });
 
-      if (updateError) {
-        console.error('Error updating room status:', updateError);
-        throw updateError;
+      if (startError) {
+        console.error('Error starting round:', startError);
+        throw startError;
       }
       
-      console.log('Room status updated successfully');
+      console.log('Round started successfully');
       
       // Reset loading state after a short delay
       setTimeout(() => {
