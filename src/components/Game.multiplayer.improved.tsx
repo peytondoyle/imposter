@@ -181,14 +181,9 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
     try {
       console.log('Creating new game with players:', playersData);
       
-      // Get random topic from Supabase
+      // Get random topic from Supabase using RPC function
       const { data: topicData, error: topicError } = await supabase
-        .from('topics')
-        .select('*')
-        .eq('family_safe', true) // Use family_safe filter based on room settings
-        .order('random()')
-        .limit(1)
-        .single();
+        .rpc('get_random_topic', { family_safe_only: true });
 
       if (topicError || !topicData) {
         console.error('Error fetching topic:', topicError);
