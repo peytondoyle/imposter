@@ -110,7 +110,7 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
         },
         (payload) => {
           console.log('Game state changed via realtime:', payload);
-          console.log('New phase from realtime:', payload.new?.current_phase);
+          console.log('New phase from realtime:', (payload.new as any)?.current_phase);
           refreshGameState();
         }
       )

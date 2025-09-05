@@ -64,7 +64,7 @@ export function Lobby({ playerData, onGameStart, onLeave }: LobbyProps) {
       setConnectionStatus('connected');
       
       // Mark existing players as not new
-      const existingIds = new Set((data || []).map(p => p.id));
+      // const existingIds = new Set((data || []).map(p => p.id));
       setNewPlayerIds(new Set());
     } catch (err: any) {
       console.error('Failed to fetch players:', err);
@@ -448,7 +448,7 @@ export function Lobby({ playerData, onGameStart, onLeave }: LobbyProps) {
         </div>
       </div>
 
-      <style jsx>{`
+      <style>{`
         @keyframes gradient {
           0%, 100% { opacity: 0.1; }
           50% { opacity: 0.3; }

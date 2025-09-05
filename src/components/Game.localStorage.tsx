@@ -114,7 +114,7 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
 
     const topic = SAMPLE_TOPICS[Math.floor(Math.random() * SAMPLE_TOPICS.length)];
     const secretWordIndex = Math.floor(Math.random() * 8) + 1;
-    const secretWord = topic[`word${secretWordIndex}`];
+    const secretWord = topic[`word${secretWordIndex}` as keyof typeof topic] as string;
     const imposterIndex = Math.floor(Math.random() * mockPlayers.length);
     
     const gamePlayers = mockPlayers.map((p, index) => ({
