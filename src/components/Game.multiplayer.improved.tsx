@@ -181,19 +181,30 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
     try {
       console.log('Creating new game with players:', playersData);
       
-      // Get random topic from Supabase using RPC function
-      const { data: topicData, error: topicError } = await supabase
-        .rpc('get_random_topic', { family_safe_only: true });
+      // Get random topic from Supabase (fallback approach)
+      const { data: allTopics, error: topicsError } = await supabase
+        .from('topics')
+        .select('*')
+        .eq('family_safe', true);
+      
+      if (topicsError || !allTopics || allTopics.length === 0) {
+        console.error('Error fetching topics:', topicsError);
+        setError('Failed to load game topic');
+        return;
+      }
+      
+      // Pick random topic from the results
+      const topicData = allTopics[Math.floor(Math.random() * allTopics.length)];
 
-      if (topicError || !topicData) {
-        console.error('Error fetching topic:', topicError);
+      if (!topicData) {
+        console.error('No topic data available');
         setError('Failed to load game topic');
         return;
       }
 
       // Pick random secret word index (1-8)
       const secretWordIndex = Math.floor(Math.random() * 8) + 1;
-      const secretWord = topicData[`word${secretWordIndex}`];
+      const secretWord = topicData[`word${secretWordIndex}` as keyof typeof topicData] as string;
       
       // Randomly assign one imposter
       const imposterIndex = Math.floor(Math.random() * playersData.length);
