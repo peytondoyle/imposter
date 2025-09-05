@@ -17,7 +17,7 @@ interface Player {
 
 export function Game({ onBackToLobby, playerData }: GameProps) {
   const [gameState, setGameState] = useState<any>(null);
-  const [currentPhase, setCurrentPhase] = useState<'role' | 'clue' | 'voting' | 'results'>('role');
+  const [currentPhase, setCurrentPhase] = useState<'role_reveal' | 'clue' | 'vote' | 'reveal'>('role_reveal');
   const [clue, setClue] = useState('');
   const [loading, setLoading] = useState(true);
   const [selectedVote, setSelectedVote] = useState<string>('');
@@ -462,7 +462,11 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
   }
 
   // Role reveal phase
-  if (currentPhase === 'role') {
+  if (currentPhase === 'role_reveal') {
+    console.log('Rendering RoleReveal phase');
+    console.log('gameState:', gameState);
+    console.log('currentPlayer:', currentPlayer);
+    console.log('topic:', gameState?.topic);
     const isImposter = currentPlayer.role === 'imposter';
     
     return (
@@ -712,7 +716,7 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
   }
 
   // Voting phase
-  if (currentPhase === 'voting') {
+  if (currentPhase === 'vote') {
     const hasVoted = gameState.votes?.[playerData.playerId] !== undefined;
     
     return (
@@ -823,7 +827,7 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
   }
 
   // Results phase
-  if (currentPhase === 'results') {
+  if (currentPhase === 'reveal') {
     const imposter = gameState.players?.find((p: Player) => p.id === gameState.imposter_id);
     const voteCounts: { [key: string]: number } = {};
     
