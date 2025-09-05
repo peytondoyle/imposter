@@ -170,11 +170,9 @@ export function Lobby({ playerData, onGameStart, onLeave }: LobbyProps) {
                         👑
                       </div>
                     )}
-                    {player.total_score > 0 && (
-                      <div className="text-xs text-gray-500 mt-1">
-                        Score: {player.total_score}
-                      </div>
-                    )}
+                    <div className="text-xs text-gray-500 mt-1">
+                      Score: {player.total_score || 0}
+                    </div>
                   </div>
                 ))}
               </div>

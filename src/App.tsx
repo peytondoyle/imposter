@@ -31,7 +31,7 @@ function App() {
         if (payload.new.status === 'playing') {
           console.log('App: Transitioning to game screen');
           setCurrentScreen('game');
-        } else if (payload.new.status === 'waiting') {
+        } else if (payload.new.status === 'lobby') {
           console.log('App: Transitioning to lobby screen');
           setCurrentScreen('lobby');
         }
@@ -69,18 +69,12 @@ function App() {
   };
 
   const handleBackToLobby = async () => {
-    // Reset room status to waiting
+    // Reset room status to lobby
     if (playerData?.isHost) {
       await supabase
         .from('rooms')
-        .update({ status: 'waiting' })
+        .update({ status: 'lobby' })
         .eq('id', playerData.roomId);
-      
-      // Clean up any old game_states records (legacy system)
-      await supabase
-        .from('game_states')
-        .delete()
-        .eq('room_id', playerData.roomId);
     }
     setCurrentScreen('lobby');
   };

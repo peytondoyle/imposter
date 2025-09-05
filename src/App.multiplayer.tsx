@@ -28,7 +28,7 @@ function App() {
         console.log('Room status update:', payload);
         if (payload.new.status === 'playing') {
           setCurrentScreen('game');
-        } else if (payload.new.status === 'waiting') {
+        } else if (payload.new.status === 'lobby') {
           setCurrentScreen('lobby');
         }
       })
@@ -59,18 +59,12 @@ function App() {
   };
 
   const handleBackToLobby = async () => {
-    // Reset room status to waiting
+    // Reset room status to lobby
     if (playerData?.isHost) {
       await supabase
         .from('rooms')
-        .update({ status: 'waiting' })
+        .update({ status: 'lobby' })
         .eq('id', playerData.roomId);
-      
-      // Delete the game state
-      await supabase
-        .from('game_states')
-        .delete()
-        .eq('room_id', playerData.roomId);
     }
     setCurrentScreen('lobby');
   };

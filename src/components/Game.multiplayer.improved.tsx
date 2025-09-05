@@ -11,16 +11,18 @@ interface Player {
   name: string;
   avatar: string;
   role?: 'detective' | 'imposter';
+  total_score?: number;
 }
 
 // Topics are now loaded from Supabase database
 
 export function Game({ onBackToLobby, playerData }: GameProps) {
   const [gameState, setGameState] = useState<any>(null);
-  const [currentPhase, setCurrentPhase] = useState<'role_reveal' | 'clue' | 'vote' | 'reveal'>('role_reveal');
+  const [currentPhase, setCurrentPhase] = useState<'role_reveal' | 'clue' | 'reveal_clues' | 'vote' | 'imposter_guess' | 'reveal' | 'done'>('role_reveal');
   const [clue, setClue] = useState('');
   const [loading, setLoading] = useState(true);
   const [selectedVote, setSelectedVote] = useState<string>('');
+  const [imposterGuess, setImposterGuess] = useState<number>(1);
   const [currentPlayer, setCurrentPlayer] = useState<Player | null>(null);
   const [error, setError] = useState<string>('');
 
@@ -133,6 +135,20 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
         votes[vote.voter_id] = vote.target_id;
       });
 
+      // Assign roles to players based on imposter_id
+      const playersWithRoles = (playersData || []).map((player: any) => ({
+        ...player,
+        role: player.id === roundData.imposter_id ? 'imposter' : 'detective'
+      }));
+
+      // Validate that there's exactly one imposter
+      const imposterCount = playersWithRoles.filter(p => p.role === 'imposter').length;
+      if (imposterCount !== 1) {
+        console.error('ERROR: Expected exactly 1 imposter, but found', imposterCount);
+        console.error('Players with roles:', playersWithRoles.map(p => ({ id: p.id, name: p.name, role: p.role })));
+        console.error('Imposter ID from round:', roundData.imposter_id);
+      }
+
       // Create game state object in the expected format
       const gameStateData = {
         id: roundData.id,
@@ -141,7 +157,7 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
         topic: roundData.topics,
         secret_word_index: roundData.secret_word_index,
         imposter_id: roundData.imposter_id,
-        players: playersData || [],
+        players: playersWithRoles,
         clues: clues,
         votes: votes,
         is_active: true
@@ -157,17 +173,18 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
       
       // Find current player
       console.log('Looking for player with ID:', playerData.playerId);
-      console.log('Available players:', playersData?.map(p => ({ id: p.id, name: p.name })));
+      console.log('Available players:', playersWithRoles?.map(p => ({ id: p.id, name: p.name, role: p.role })));
       
-      const player = playersData?.find((p: any) => p.id === playerData.playerId);
+      const player = playersWithRoles?.find((p: any) => p.id === playerData.playerId);
       setCurrentPlayer(player || null);
       
       if (!player) {
         console.warn('Current player not found in players list');
         console.warn('Player ID mismatch - looking for:', playerData.playerId);
-        console.warn('Available player IDs:', playersData?.map(p => p.id));
+        console.warn('Available player IDs:', playersWithRoles?.map(p => p.id));
       } else {
         console.log('Found current player:', player);
+        console.log('Player role:', player.role);
       }
       
       setLoading(false);
@@ -365,6 +382,47 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
     }
   };
 
+  const handleEndRound = async (imposterGuessIndex: number) => {
+    if (!playerData.isHost || !gameState) return;
+
+    try {
+      // Get current round ID
+      const { data: roundData } = await supabase
+        .from('rounds')
+        .select('id')
+        .eq('room_id', playerData.roomId)
+        .order('round_number', { ascending: false })
+        .limit(1)
+        .single();
+      
+      if (!roundData) {
+        setError('No active round found');
+        return;
+      }
+      
+      // Call end_round RPC function to calculate scores
+      const { data: endRoundData, error } = await supabase.rpc('end_round', {
+        p_round_id: roundData.id,
+        p_imposter_guess_index: imposterGuessIndex,
+        p_write_token: playerData.writeToken || ''
+      });
+      
+      if (error) {
+        console.error('Error ending round:', error);
+        setError('Failed to end round');
+        return;
+      }
+      
+      console.log('Round ended successfully:', endRoundData);
+      
+      // Refresh game state to get updated scores
+      await refreshGameState();
+    } catch (error) {
+      console.error('Error ending round:', error);
+      setError('Failed to end round');
+    }
+  };
+
   const resetGame = async () => {
     if (!playerData.isHost || !gameState) return;
 
@@ -468,8 +526,23 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
     console.log('currentPlayer:', currentPlayer);
     console.log('topic:', gameState?.topic);
     console.log('secret_word_index:', gameState?.secret_word_index);
+    console.log('imposter_id from gameState:', gameState?.imposter_id);
+    console.log('currentPlayer.id:', currentPlayer?.id);
+    console.log('currentPlayer.role:', currentPlayer?.role);
     
-    const isImposter = currentPlayer.role === 'imposter';
+    const isImposter = currentPlayer?.role === 'imposter';
+    console.log('isImposter calculated as:', isImposter);
+    
+    // Debug: Show all players and their roles
+    console.log('All players with roles:');
+    gameState?.players?.forEach((player: any, index: number) => {
+      console.log(`Player ${index + 1}:`, {
+        id: player.id,
+        name: player.name,
+        role: player.role,
+        isImposter: player.id === gameState?.imposter_id
+      });
+    });
     
     // Calculate the secret word from the topic and secret_word_index
     const secretWord = gameState?.topic && gameState?.secret_word_index 
@@ -495,6 +568,15 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
                 ? 'Blend in by giving vague clues that could apply to any word!'
                 : 'Find the Chameleon by asking questions!'}
             </p>
+            
+            {/* Debug info - remove in production */}
+            <div className="mt-4 p-3 bg-black/20 rounded-lg text-xs text-white/60">
+              <div>Debug Info:</div>
+              <div>Your ID: {currentPlayer?.id}</div>
+              <div>Imposter ID: {gameState?.imposter_id}</div>
+              <div>Your Role: {currentPlayer?.role}</div>
+              <div>Is Imposter: {isImposter ? 'YES' : 'NO'}</div>
+            </div>
           </div>
 
           {/* Topic Card with 8 words */}
@@ -828,7 +910,7 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
                       }}
                       className="w-full py-4 bg-gradient-to-r from-green-500 to-emerald-500 text-white font-bold rounded-xl hover:from-green-600 hover:to-emerald-600 transition-all duration-300 shadow-lg hover:shadow-green-400/30 text-lg"
                     >
-                      Show Results
+                      Continue to Imposter Guess
                     </button>
                   </div>
                 ) : null;
@@ -840,8 +922,61 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
     );
   }
 
+  // Imposter guess phase
+  if (currentPhase === 'imposter_guess') {
+    const isImposter = currentPlayer?.id === gameState?.imposter_id;
+    
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 flex items-center justify-center p-4">
+        <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-3xl p-8 max-w-2xl w-full text-center">
+          <div className="text-6xl mb-6">🎯</div>
+          <h1 className="text-4xl font-bold text-white mb-4">Imposter Guess</h1>
+          
+          {isImposter ? (
+            <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-2xl p-6 mb-8">
+              <h2 className="text-2xl font-bold text-white mb-4">Guess the Secret Word!</h2>
+              <p className="text-white/70 mb-6">
+                You get a bonus point if you guess correctly!
+              </p>
+              
+              <div className="grid grid-cols-4 gap-3 mb-6">
+                {[1, 2, 3, 4, 5, 6, 7, 8].map((index) => (
+                  <button
+                    key={index}
+                    onClick={() => setImposterGuess(index)}
+                    className={`py-3 px-4 rounded-xl font-bold transition-all ${
+                      imposterGuess === index
+                        ? 'bg-gradient-to-r from-yellow-500 to-orange-500 text-white shadow-lg'
+                        : 'bg-white/10 text-white/70 hover:bg-white/20'
+                    }`}
+                  >
+                    {gameState?.topic?.[`word${index}` as keyof typeof gameState.topic] || `Word ${index}`}
+                  </button>
+                ))}
+              </div>
+              
+              <button
+                onClick={() => handleEndRound(imposterGuess)}
+                className="w-full py-4 bg-gradient-to-r from-yellow-500 to-orange-500 text-white font-bold rounded-xl hover:from-yellow-600 hover:to-orange-600 transition-all duration-300 shadow-lg hover:shadow-yellow-400/30 text-lg"
+              >
+                Submit Guess & End Round
+              </button>
+            </div>
+          ) : (
+            <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-2xl p-6 mb-8">
+              <h2 className="text-2xl font-bold text-white mb-4">Waiting for Imposter</h2>
+              <p className="text-white/70">
+                The imposter is making their final guess...
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   // Results phase
-  if (currentPhase === 'reveal') {
+  if (currentPhase === 'reveal' || currentPhase === 'done') {
     const imposter = gameState.players?.find((p: Player) => p.id === gameState.imposter_id);
     const voteCounts: { [key: string]: number } = {};
     
@@ -856,20 +991,42 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
     )[0];
     
     const detectivesWin = mostVoted === gameState.imposter_id;
+    const secretWord = gameState?.topic && gameState?.secret_word_index 
+      ? gameState.topic[`word${gameState.secret_word_index}` as keyof typeof gameState.topic] as string
+      : '???';
+    
+    // Check for game winner
+    const gameWinner = gameState.players?.find((p: Player) => 
+      (p.total_score ?? 0) >= (gameState.room?.win_target || 5)
+    );
     
     return (
       <div className="min-h-screen bg-gradient-to-br from-green-900 via-emerald-900 to-teal-900 flex items-center justify-center p-4">
-        <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-3xl p-8 max-w-2xl w-full text-center">
+        <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-3xl p-8 max-w-4xl w-full text-center">
           <div className="text-6xl mb-6">{detectivesWin ? '🎉' : '😈'}</div>
-          <h1 className="text-4xl font-bold text-white mb-4">Game Results</h1>
+          <h1 className="text-4xl font-bold text-white mb-4">Round Results</h1>
+          
+          {gameWinner && (
+            <div className="bg-gradient-to-r from-yellow-500/20 to-orange-500/20 backdrop-blur-sm border border-yellow-400/30 rounded-2xl p-6 mb-8">
+              <div className="text-6xl mb-4">🏆</div>
+              <h2 className="text-3xl font-bold text-yellow-400 mb-2">GAME WINNER!</h2>
+              <div className="text-2xl text-white font-semibold mb-2">{gameWinner.name}</div>
+              <p className="text-yellow-200">Reached {gameWinner.total_score ?? 0} points!</p>
+            </div>
+          )}
           
           <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-2xl p-6 mb-8">
-            <h2 className="text-2xl font-bold text-white mb-4">The Imposter Was...</h2>
-            <div className="text-6xl mb-4">{imposter?.avatar}</div>
-            <p className="text-xl text-white font-semibold">{imposter?.name}</p>
-            <p className="text-white/70 mt-2">
-              {detectivesWin ? 'The detectives won! 🕵️' : 'The imposter fooled everyone! 🦹'}
+            <h2 className="text-2xl font-bold text-white mb-4">The Secret Word Was...</h2>
+            <div className="text-4xl font-bold text-yellow-400 mb-2">{secretWord}</div>
+            <p className="text-white/70 mb-4">
+              {detectivesWin ? 'The detectives caught the imposter! 🕵️' : 'The imposter fooled everyone! 🦹'}
             </p>
+            <div className="text-white/70">
+              <p>Imposter: {imposter?.name}</p>
+              {gameState.imposter_guess_index && (
+                <p>Imposter guessed: {gameState.topic?.[`word${gameState.imposter_guess_index}` as keyof typeof gameState.topic]}</p>
+              )}
+            </div>
           </div>
 
           <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-2xl p-4 mb-8">
@@ -888,13 +1045,39 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
             ))}
           </div>
 
+          <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-2xl p-4 mb-8">
+            <h3 className="text-xl font-bold text-white mb-4">Current Scores:</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {gameState.players?.map((player: Player) => (
+                <div key={player.id} className="flex items-center justify-between bg-white/5 rounded-xl p-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">{player.avatar}</span>
+                    <span className="text-white">{player.name}</span>
+                    {player.id === gameState.imposter_id && (
+                      <span className="text-red-400 text-sm">(Imposter)</span>
+                    )}
+                  </div>
+                  <span className="text-yellow-400 font-bold">{player.total_score ?? 0} pts</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
           <div className="space-y-3">
-            {playerData.isHost && (
+            {playerData.isHost && !gameWinner && (
               <button
                 onClick={resetGame}
                 className="w-full py-4 bg-gradient-to-r from-blue-500 to-purple-500 text-white font-bold rounded-xl hover:from-blue-600 hover:to-purple-600 transition-all duration-300 shadow-lg hover:shadow-blue-400/30 text-lg"
               >
-                Play Again
+                Next Round
+              </button>
+            )}
+            {gameWinner && (
+              <button
+                onClick={resetGame}
+                className="w-full py-4 bg-gradient-to-r from-yellow-500 to-orange-500 text-white font-bold rounded-xl hover:from-yellow-600 hover:to-orange-600 transition-all duration-300 shadow-lg hover:shadow-yellow-400/30 text-lg"
+              >
+                New Game
               </button>
             )}
             <button

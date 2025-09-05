@@ -247,15 +247,13 @@ export function Lobby({ playerData, onGameStart, onLeave }: LobbyProps) {
                       </div>
                       
                       {/* Score */}
-                      {player.total_score > 0 && (
-                        <div className="text-center">
-                          <div className="inline-block px-2 py-1 bg-white/10 rounded-full">
-                            <span className="text-white/80 text-xs">
-                              🏆 {player.total_score}
-                            </span>
-                          </div>
+                      <div className="text-center">
+                        <div className="inline-block px-2 py-1 bg-white/10 rounded-full">
+                          <span className="text-white/80 text-xs">
+                            🏆 {player.total_score || 0}
+                          </span>
                         </div>
-                      )}
+                      </div>
                     </div>
                   ))}
                   
