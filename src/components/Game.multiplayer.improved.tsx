@@ -1,5 +1,11 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
+import { useGameStore } from '../stores/gameStore';
+import { AnswerForm } from './round/AnswerForm';
+import { AnswerProgress } from './round/AnswerProgress';
+import { RevealGrid } from './round/RevealGrid';
+import { VotePanel } from './round/VotePanel';
+import { ResultsPanel } from './round/ResultsPanel';
 
 interface GameProps {
   onBackToLobby: () => void;
@@ -14,17 +20,30 @@ interface Player {
   total_score?: number;
 }
 
+interface TextPrompt {
+  id: number;
+  prompt: string;
+  category: string;
+  is_secret?: boolean;
+}
+
+
 // Topics are now loaded from Supabase database
 
 export function Game({ onBackToLobby, playerData }: GameProps) {
+  // Game store for state management
+  const gameStore = useGameStore();
+  
   const [gameState, setGameState] = useState<any>(null);
-  const [currentPhase, setCurrentPhase] = useState<'role_reveal' | 'clue' | 'reveal_clues' | 'vote' | 'imposter_guess' | 'reveal' | 'done'>('role_reveal');
-  const [clue, setClue] = useState('');
+  const [currentPhase, setCurrentPhase] = useState<'role_reveal' | 'answer_entry' | 'reveal_clues' | 'vote' | 'imposter_guess' | 'reveal' | 'done'>('role_reveal');
   const [loading, setLoading] = useState(true);
-  const [selectedVote, setSelectedVote] = useState<string>('');
   const [imposterGuess, setImposterGuess] = useState<number>(1);
   const [currentPlayer, setCurrentPlayer] = useState<Player | null>(null);
   const [error, setError] = useState<string>('');
+  const [realtimeStatus, setRealtimeStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
+  
+  // New state for prompts and answers
+  const [prompts] = useState<any[]>([]);
 
   useEffect(() => {
     console.log('Game component mounted, initializing...');
@@ -43,6 +62,189 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
     };
   }, [playerData.roomId]);
 
+  // Auto-advance phase when all players have submitted answers
+  useEffect(() => {
+    if (currentPhase === 'answer_entry' && gameState?.players && playerData.isHost) {
+      const allSubmitted = gameState.players.every((p: Player) => {
+        const playerAnswers = gameState.answers?.filter((answer: any) => answer.player_id === p.id) || [];
+        return playerAnswers.length === (prompts.length || 0);
+      });
+      
+      if (allSubmitted) {
+        console.log('All players have submitted answers, auto-advancing phase...');
+        const advancePhase = async () => {
+          try {
+            // Get current round ID
+            const { data: roundData } = await supabase
+              .from('rounds')
+              .select('id')
+              .eq('room_id', playerData.roomId)
+              .order('round_number', { ascending: false })
+              .limit(1)
+              .single();
+            
+            if (roundData) {
+              await supabase.rpc('advance_phase', {
+                p_round_id: roundData.id,
+                p_write_token: playerData.writeToken || ''
+              });
+              await refreshGameState();
+            }
+          } catch (error) {
+            console.error('Error auto-advancing phase:', error);
+            setError('Failed to advance phase');
+          }
+        };
+        
+        // Add a small delay to let players see their answers were recorded
+        const timer = setTimeout(advancePhase, 2000);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [currentPhase, gameState?.answers, gameState?.players, playerData.isHost, playerData.roomId, playerData.writeToken, prompts]);
+
+  // Load answers when entering reveal phase
+  useEffect(() => {
+    if (currentPhase === 'reveal_clues' && gameState?.id) {
+      console.log('Reveal clues phase, loading answers...');
+      const loadAnswers = async () => {
+        try {
+          // Answers are loaded via real-time subscription
+        } catch (error) {
+          console.error('Error loading answers:', error);
+          setError('Failed to load answers');
+        }
+      };
+      
+      loadAnswers();
+    }
+  }, [currentPhase, gameState?.id]);
+
+  // Auto-advance phase after a short delay to let players read the clues
+  useEffect(() => {
+    if (currentPhase === 'reveal_clues' && playerData.isHost) {
+      console.log('Reveal clues phase, auto-advancing after delay...');
+      const advancePhase = async () => {
+        try {
+          // Get current round ID
+          const { data: roundData } = await supabase
+            .from('rounds')
+            .select('id')
+            .eq('room_id', playerData.roomId)
+            .order('round_number', { ascending: false })
+            .limit(1)
+            .single();
+          
+          if (roundData) {
+            await supabase.rpc('advance_phase', {
+              p_round_id: roundData.id,
+              p_write_token: playerData.writeToken || ''
+            });
+            await refreshGameState();
+          }
+        } catch (error) {
+          console.error('Error auto-advancing phase:', error);
+          setError('Failed to advance phase');
+        }
+      };
+      
+      // Give players 5 seconds to read the clues
+      const timer = setTimeout(advancePhase, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [currentPhase, playerData.isHost, playerData.roomId, playerData.writeToken]);
+
+  // Load votes when entering vote phase
+  useEffect(() => {
+    if (currentPhase === 'vote' && gameState?.id) {
+      console.log('Vote phase, loading votes...');
+      const loadVotes = async () => {
+        try {
+          await gameStore.getVotes(gameState.id);
+        } catch (error) {
+          console.error('Error loading votes:', error);
+          setError('Failed to load votes');
+        }
+      };
+      
+      loadVotes();
+    }
+  }, [currentPhase, gameState?.id]);
+
+  // Auto-advance phase when all players have voted
+  useEffect(() => {
+    if (currentPhase === 'vote' && gameState?.players && playerData.isHost) {
+      const allVoted = gameState.players.every((p: Player) => 
+        gameState.votes?.[p.id] !== undefined
+      );
+      
+      if (allVoted) {
+        console.log('All players have voted, auto-advancing phase...');
+        const advancePhase = async () => {
+          try {
+            // Get current round ID
+            const { data: roundData } = await supabase
+              .from('rounds')
+              .select('id')
+              .eq('room_id', playerData.roomId)
+              .order('round_number', { ascending: false })
+              .limit(1)
+              .single();
+            
+            if (roundData) {
+              await supabase.rpc('advance_phase', {
+                p_round_id: roundData.id,
+                p_write_token: playerData.writeToken || ''
+              });
+              await refreshGameState();
+            }
+          } catch (error) {
+            console.error('Error auto-advancing phase:', error);
+            setError('Failed to advance phase');
+          }
+        };
+        
+        // Add a small delay to let players see their vote was recorded
+        const timer = setTimeout(advancePhase, 2000);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [currentPhase, gameState?.votes, gameState?.players, playerData.isHost, playerData.roomId, playerData.writeToken]);
+
+  // Auto-advance phase when imposter has made their guess
+  useEffect(() => {
+    if (currentPhase === 'imposter_guess' && gameState?.imposter_guess_index !== undefined && playerData.isHost) {
+      console.log('Imposter has made their guess, auto-advancing to reveal phase...');
+      const advancePhase = async () => {
+        try {
+          // Get current round ID
+          const { data: roundData } = await supabase
+            .from('rounds')
+            .select('id')
+            .eq('room_id', playerData.roomId)
+            .order('round_number', { ascending: false })
+            .limit(1)
+            .single();
+          
+          if (roundData) {
+            await supabase.rpc('advance_phase', {
+              p_round_id: roundData.id,
+              p_write_token: playerData.writeToken || ''
+            });
+            await refreshGameState();
+          }
+        } catch (error) {
+          console.error('Error auto-advancing phase:', error);
+          setError('Failed to advance phase');
+        }
+      };
+      
+      // Add a small delay to let players see the guess was made
+      const timer = setTimeout(advancePhase, 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [currentPhase, gameState?.imposter_guess_index, playerData.isHost, playerData.roomId, playerData.writeToken]);
+
   const cleanupSubscriptions = () => {
     supabase.removeAllChannels();
   };
@@ -54,12 +256,7 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
       // Get current round data
       const { data: roundData, error: roundError } = await supabase
         .from('rounds')
-        .select(`
-          *,
-          topics (
-            id, category, topic, word1, word2, word3, word4, word5, word6, word7, word8, family_safe
-          )
-        `)
+        .select('*')
         .eq('room_id', playerData.roomId)
         .order('round_number', { ascending: false })
         .limit(1)
@@ -95,19 +292,33 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
       }
       console.log('Players fetched successfully:', playersData?.length, 'players');
 
-      // Get clues for this round
-      console.log('Fetching clues for round:', roundData.id);
-      const { data: cluesData, error: cluesError } = await supabase
-        .from('clues')
+      // Get prompts for this round (filtered by player role)
+      const { data: promptsData, error: promptsError } = await supabase
+        .rpc('get_player_prompts', {
+          p_round_id: roundData.id,
+          p_player_id: playerData.playerId
+        });
+
+      if (promptsError) {
+        console.error('Error fetching prompts:', promptsError);
+        setError('Failed to load prompts');
+        return;
+      }
+      console.log('Prompts fetched successfully:', promptsData?.length, 'prompts');
+
+      // Get answers for this round
+      console.log('Fetching answers for round:', roundData.id);
+      const { data: answersData, error: answersError } = await supabase
+        .from('answers')
         .select('*')
         .eq('round_id', roundData.id);
 
-      if (cluesError) {
-        console.error('Error fetching clues:', cluesError);
-        setError('Failed to load clues');
+      if (answersError) {
+        console.error('Error fetching answers:', answersError);
+        setError('Failed to load answers');
         return;
       }
-      console.log('Clues fetched successfully:', cluesData?.length, 'clues');
+      console.log('Answers fetched successfully:', answersData?.length, 'answers');
 
       // Get votes for this round
       console.log('Fetching votes for round:', roundData.id);
@@ -123,17 +334,21 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
       }
       console.log('Votes fetched successfully:', votesData?.length, 'votes');
 
-      // Convert clues and votes to the format expected by the UI
-      const clues: { [key: string]: string } = {};
+      // Convert answers and votes to the format expected by the UI
+      const answers: { [key: string]: { [key: string]: string } } = {};
       const votes: { [key: string]: string } = {};
       
-      cluesData?.forEach(clue => {
-        clues[clue.player_id] = clue.word;
+      answersData?.forEach(answer => {
+        if (!answers[answer.player_id]) {
+          answers[answer.player_id] = {};
+        }
+        answers[answer.player_id][answer.prompt_id] = answer.answer_text;
       });
       
       votesData?.forEach(vote => {
         votes[vote.voter_id] = vote.target_id;
       });
+
 
       // Assign roles to players based on imposter_id
       const playersWithRoles = (playersData || []).map((player: any) => ({
@@ -154,11 +369,10 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
         id: roundData.id,
         room_id: playerData.roomId,
         current_phase: roundData.phase,
-        topic: roundData.topics,
-        secret_word_index: roundData.secret_word_index,
+        prompts: promptsData || [],
+        answers: answers,
         imposter_id: roundData.imposter_id,
         players: playersWithRoles,
-        clues: clues,
         votes: votes,
         is_active: true
       };
@@ -244,13 +458,22 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
         console.log('Realtime subscription status:', status);
         if (status === 'SUBSCRIBED') {
           console.log('Successfully subscribed to game state changes');
+          setRealtimeStatus('connected');
         } else if (status === 'CHANNEL_ERROR') {
           console.error('Realtime subscription error, retrying...');
+          setRealtimeStatus('disconnected');
           setTimeout(() => {
             setupRealtimeSubscription();
-          }, 1000);
+          }, 2000);
         } else if (status === 'TIMED_OUT') {
           console.warn('Realtime subscription timed out, retrying...');
+          setRealtimeStatus('disconnected');
+          setTimeout(() => {
+            setupRealtimeSubscription();
+          }, 2000);
+        } else if (status === 'CLOSED') {
+          console.warn('Realtime subscription closed, reconnecting...');
+          setRealtimeStatus('disconnected');
           setTimeout(() => {
             setupRealtimeSubscription();
           }, 1000);
@@ -299,153 +522,7 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
 
 
 
-  const handleClueSubmit = async () => {
-    if (!clue.trim() || !gameState) return;
 
-    try {
-      // Get current round ID
-      const { data: roundData } = await supabase
-        .from('rounds')
-        .select('id')
-        .eq('room_id', playerData.roomId)
-        .order('round_number', { ascending: false })
-        .limit(1)
-        .single();
-      
-      if (!roundData) {
-        setError('No active round found');
-        return;
-      }
-      
-      // Submit clue using RPC function
-      const { error } = await supabase.rpc('submit_clue', {
-        p_round_id: roundData.id,
-        p_player_id: playerData.playerId,
-        p_word: clue.trim(),
-        p_write_token: playerData.writeToken || ''
-      });
-      
-      if (error) {
-        console.error('Error submitting clue:', error);
-        setError('Failed to submit clue');
-        return;
-      }
-      
-      setClue('');
-      // Refresh game state to show updated clues
-      await refreshGameState();
-    } catch (error) {
-      console.error('Error submitting clue:', error);
-      setError('Network error while submitting clue');
-    }
-  };
-
-  const handleVote = async (targetId: string) => {
-    if (!gameState) return;
-    
-    setSelectedVote(targetId);
-    
-    try {
-      // Get current round ID
-      const { data: roundData } = await supabase
-        .from('rounds')
-        .select('id')
-        .eq('room_id', playerData.roomId)
-        .order('round_number', { ascending: false })
-        .limit(1)
-        .single();
-      
-      if (!roundData) {
-        setError('No active round found');
-        return;
-      }
-      
-      // Submit vote using RPC function
-      const { error } = await supabase.rpc('cast_vote', {
-        p_round_id: roundData.id,
-        p_voter_id: playerData.playerId,
-        p_target_id: targetId,
-        p_write_token: playerData.writeToken || ''
-      });
-      
-      if (error) {
-        console.error('Error submitting vote:', error);
-        setError('Failed to submit vote');
-        return;
-      }
-      
-      // Refresh game state to show updated votes
-      await refreshGameState();
-    } catch (error) {
-      console.error('Error voting:', error);
-      setError('Network error while voting');
-    }
-  };
-
-  const handleEndRound = async (imposterGuessIndex: number) => {
-    if (!playerData.isHost || !gameState) return;
-
-    try {
-      // Get current round ID
-      const { data: roundData } = await supabase
-        .from('rounds')
-        .select('id')
-        .eq('room_id', playerData.roomId)
-        .order('round_number', { ascending: false })
-        .limit(1)
-        .single();
-      
-      if (!roundData) {
-        setError('No active round found');
-        return;
-      }
-      
-      // Call end_round RPC function to calculate scores
-      const { data: endRoundData, error } = await supabase.rpc('end_round', {
-        p_round_id: roundData.id,
-        p_imposter_guess_index: imposterGuessIndex,
-        p_write_token: playerData.writeToken || ''
-      });
-      
-      if (error) {
-        console.error('Error ending round:', error);
-        setError('Failed to end round');
-        return;
-      }
-      
-      console.log('Round ended successfully:', endRoundData);
-      
-      // Refresh game state to get updated scores
-      await refreshGameState();
-    } catch (error) {
-      console.error('Error ending round:', error);
-      setError('Failed to end round');
-    }
-  };
-
-  const resetGame = async () => {
-    if (!playerData.isHost || !gameState) return;
-
-    try {
-      // Start a new round using the RPC function
-      const { error } = await supabase.rpc('start_round', {
-        p_room_id: playerData.roomId,
-        p_write_token: playerData.writeToken || ''
-      });
-
-      if (error) {
-        console.error('Error starting new round:', error);
-        setError('Failed to start new round');
-        return;
-      }
-
-      // Refresh game state to get the new round data
-      await refreshGameState();
-    } catch (error) {
-      console.error('Error resetting game:', error);
-      setError('Failed to reset game');
-    }
-  };
 
   // Loading state
   if (loading) {
@@ -519,6 +596,30 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
     );
   }
 
+  // Real-time status indicator component
+  const RealtimeStatusIndicator = () => (
+    <div className="fixed top-4 right-4 z-50">
+      <div className={`flex items-center gap-2 px-3 py-2 rounded-full text-sm font-medium ${
+        realtimeStatus === 'connected' 
+          ? 'bg-green-500/20 text-green-400 border border-green-400/30' 
+          : realtimeStatus === 'connecting'
+          ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-400/30'
+          : 'bg-red-500/20 text-red-400 border border-red-400/30'
+      }`}>
+        <div className={`w-2 h-2 rounded-full ${
+          realtimeStatus === 'connected' 
+            ? 'bg-green-400 animate-pulse' 
+            : realtimeStatus === 'connecting'
+            ? 'bg-yellow-400 animate-pulse'
+            : 'bg-red-400'
+        }`}></div>
+        <span className="text-xs">
+          {realtimeStatus === 'connected' ? 'Live' : realtimeStatus === 'connecting' ? 'Connecting...' : 'Disconnected'}
+        </span>
+      </div>
+    </div>
+  );
+
   // Role reveal phase
   if (currentPhase === 'role_reveal') {
     console.log('Rendering RoleReveal phase');
@@ -544,15 +645,15 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
       });
     });
     
-    // Calculate the secret word from the topic and secret_word_index
-    const secretWord = gameState?.topic && gameState?.secret_word_index 
-      ? gameState.topic[`word${gameState.secret_word_index}` as keyof typeof gameState.topic] as string
-      : '???';
+    // Get the selected prompt
+    const selectedPrompt = gameState?.text_prompts?.find((p: TextPrompt) => p.id === gameState?.selected_prompt_id);
+    const secretPrompt = selectedPrompt?.prompt || '???';
     
-    console.log('Calculated secret word:', secretWord);
+    console.log('Selected prompt:', secretPrompt);
     
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 flex items-center justify-center p-4">
+        <RealtimeStatusIndicator />
         <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-3xl p-8 max-w-4xl w-full text-center">
           <div className="text-6xl mb-6">🎭</div>
           <h1 className="text-4xl font-bold text-white mb-4">Role Reveal</h1>
@@ -579,10 +680,10 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
             </div>
           </div>
 
-          {/* Topic Card with 8 words */}
+          {/* Text Prompts Card */}
           <div className="bg-white rounded-2xl shadow-2xl p-6 mb-8">
             <div className="text-center mb-6">
-              <h2 className="text-3xl font-bold text-gray-800 mb-2">{gameState.topic?.category || 'Mystery'}</h2>
+              <h2 className="text-3xl font-bold text-gray-800 mb-2">Text Prompts</h2>
               <div className="text-sm text-gray-500 mb-4">
                 {isImposter ? (
                   <span className="text-red-600 font-medium">🦹 You are the CHAMELEON</span>
@@ -593,36 +694,38 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
               {!isImposter && (
                 <div className="bg-gradient-to-r from-blue-100 to-purple-100 rounded-xl p-3 mb-4">
                   <p className="text-sm text-gray-700">
-                    <span className="font-semibold">Secret Word:</span> <span className="font-bold text-blue-700">{secretWord}</span>
+                    <span className="font-semibold">Secret Prompt:</span> <span className="font-bold text-blue-700">"{secretPrompt}"</span>
                   </p>
                   <p className="text-xs text-gray-600 mt-1">
-                    Give clues about this word without being too obvious!
+                    Answer this prompt without being too obvious!
                   </p>
                 </div>
               )}
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              {[1,2,3,4,5,6,7,8].map((index) => {
-                const word = gameState.topic?.[`word${index}`];
-                const isSecret = index === gameState?.secret_word_index;
+            <div className="space-y-3">
+              {gameState.text_prompts?.map((prompt: TextPrompt) => {
+                const isSecret = prompt.id === gameState?.selected_prompt_id;
                 const shouldHighlight = !isImposter && isSecret;
                 
                 return (
                   <div
-                    key={index}
+                    key={prompt.id}
                     className={`
-                      p-4 rounded-xl text-center font-medium text-lg border-2 transition-all
+                      p-4 rounded-xl text-left font-medium text-lg border-2 transition-all
                       ${shouldHighlight 
                         ? 'bg-gradient-to-r from-blue-500 to-purple-600 text-white border-blue-400 shadow-lg transform scale-105' 
                         : 'bg-gray-50 text-gray-800 border-gray-200 hover:bg-gray-100'
                       }
                     `}
                   >
-                    {word || '???'}
-                    {shouldHighlight && (
-                      <div className="text-xs mt-1 opacity-90">SECRET</div>
-                    )}
+                    <div className="flex items-center justify-between">
+                      <span>{prompt.prompt}</span>
+                      {shouldHighlight && (
+                        <span className="text-xs bg-white/20 px-2 py-1 rounded-full">SECRET</span>
+                      )}
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1">{prompt.category}</div>
                   </div>
                 );
               })}
@@ -631,9 +734,9 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
             {isImposter && (
               <div className="mt-6 bg-gradient-to-r from-red-100 to-orange-100 rounded-xl p-4">
                 <p className="text-sm text-gray-700 text-center">
-                  <span className="font-semibold">Your Mission:</span> Blend in by giving a vague clue that could apply to any of these words.
+                  <span className="font-semibold">Your Mission:</span> Blend in by giving a vague answer that could apply to any of these prompts.
                   <br />
-                  <span className="text-xs text-gray-600">The crew knows the secret word, but you don't!</span>
+                  <span className="text-xs text-gray-600">The crew knows the secret prompt, but you don't!</span>
                 </p>
               </div>
             )}
@@ -679,14 +782,14 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
                 }}
                 className="w-full py-4 bg-gradient-to-r from-blue-500 to-purple-500 text-white font-bold rounded-xl hover:from-blue-600 hover:to-purple-600 transition-all"
               >
-                Start Clue Phase
+                Start Answer Phase
               </button>
             </div>
           )}
           
           {!playerData.isHost && (
             <div className="text-center">
-              <p className="text-white/70">Waiting for host to start clue phase...</p>
+              <p className="text-white/70">Waiting for host to start answer phase...</p>
             </div>
           )}
         </div>
@@ -694,118 +797,120 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
     );
   }
 
-  // Clue phase
-  if (currentPhase === 'clue') {
-    const hasSubmittedClue = gameState.clues?.[playerData.playerId] !== undefined;
-    
-    // Calculate the secret word from the topic and secret_word_index
-    const secretWord = gameState?.topic && gameState?.secret_word_index 
-      ? gameState.topic[`word${gameState.secret_word_index}` as keyof typeof gameState.topic] as string
-      : '???';
+  // Answer Entry phase
+  if (currentPhase === 'answer_entry') {
+    const isImposter = currentPlayer?.role === 'imposter';
     
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-900 via-purple-900 to-indigo-900 flex items-center justify-center p-4">
-        <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-3xl p-8 max-w-2xl w-full">
+        <RealtimeStatusIndicator />
+        <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-3xl p-8 max-w-4xl w-full">
           <div className="text-center mb-8">
-            <h1 className="text-4xl font-bold text-white mb-2">🎯 Clue Phase</h1>
-            <p className="text-white/80">Give a clue about the secret word!</p>
+            <h1 className="text-4xl font-bold text-white mb-2">🎯 Answer Phase</h1>
+            <p className="text-white/80">Answer all the prompts below!</p>
           </div>
 
           <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-2xl p-6 mb-8">
             <h2 className="text-xl font-bold text-white mb-4">
               Topic: {gameState.topic?.category || 'Mystery'}
             </h2>
-            {currentPlayer?.role !== 'imposter' && (
-              <p className="text-white/70">Secret word: {secretWord}</p>
+            {!isImposter && (
+              <div className="bg-blue-500/20 border border-blue-400/30 rounded-lg p-3 mb-4">
+                <p className="text-blue-200 font-semibold">You know the secret word!</p>
+                <p className="text-blue-200/80 text-sm">Answer the prompts as if you know this word!</p>
+              </div>
             )}
-            {currentPlayer?.role === 'imposter' && (
-              <p className="text-orange-300">You're the imposter! Give a convincing clue.</p>
+            {isImposter && (
+              <div className="bg-orange-500/20 border border-orange-400/30 rounded-lg p-3 mb-4">
+                <p className="text-orange-200 font-semibold">You're the imposter!</p>
+                <p className="text-orange-200/80 text-sm">Give vague answers that could apply to any prompt!</p>
+              </div>
             )}
           </div>
 
-          {!hasSubmittedClue ? (
-            <>
-              <div className="mb-8">
-                <label className="block text-white font-medium mb-3">Your Clue:</label>
-                <input
-                  type="text"
-                  value={clue}
-                  onChange={(e) => setClue(e.target.value)}
-                  placeholder="Enter your clue..."
-                  className="w-full px-4 py-3 bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
-                />
-              </div>
-
-              <button
-                onClick={handleClueSubmit}
-                disabled={!clue.trim()}
-                className="w-full py-4 bg-gradient-to-r from-green-500 to-emerald-500 text-white font-bold rounded-xl hover:from-green-600 hover:to-emerald-600 transition-all duration-300 shadow-lg hover:shadow-green-400/30 text-lg disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Submit Clue
-              </button>
-            </>
-          ) : (
-            <div className="text-center">
-              <div className="text-6xl mb-4">✅</div>
-              <p className="text-white text-xl mb-4">Clue submitted!</p>
-              <p className="text-white/70">Waiting for other players...</p>
-              
-              <div className="mt-8 space-y-2">
-                <p className="text-white/70 text-sm">Players who have submitted:</p>
-                {gameState.players?.map((p: Player) => {
-                  const submitted = gameState.clues?.[p.id] !== undefined;
-                  return (
-                    <div key={p.id} className="flex items-center justify-center gap-2">
-                      <span className="text-lg">{p.avatar}</span>
-                      <span className="text-white text-sm">{p.name}</span>
-                      <span className={submitted ? 'text-green-400' : 'text-gray-400'}>
-                        {submitted ? '✓' : '○'}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Manual continue button for host when all players have submitted */}
-              {playerData.isHost && (() => {
-                const allSubmitted = gameState.players?.every((p: Player) => 
-                  gameState.clues?.[p.id] !== undefined
-                );
-                return allSubmitted ? (
-                  <div className="mt-8">
-                    <button
-                      onClick={async () => {
-                        try {
-                          // Get current round ID
-                          const { data: roundData } = await supabase
-                            .from('rounds')
-                            .select('id')
-                            .eq('room_id', playerData.roomId)
-                            .order('round_number', { ascending: false })
-                            .limit(1)
-                            .single();
-                          
-                          if (roundData) {
-                            await supabase.rpc('advance_phase', {
-                              p_round_id: roundData.id,
-                              p_write_token: playerData.writeToken || ''
-                            });
-                            await refreshGameState();
-                          }
-                        } catch (error) {
-                          console.error('Error advancing phase:', error);
-                          setError('Failed to advance phase');
-                        }
-                      }}
-                      className="w-full py-4 bg-gradient-to-r from-purple-500 to-pink-500 text-white font-bold rounded-xl hover:from-purple-600 hover:to-pink-600 transition-all duration-300 shadow-lg hover:shadow-purple-400/30 text-lg"
-                    >
-                      Continue to Voting Phase
-                    </button>
-                  </div>
-                ) : null;
-              })()}
-            </div>
+          {/* Answer Form for non-host players */}
+          {!playerData.isHost && (
+            <AnswerForm
+              roundId={gameState.id}
+              playerId={playerData.playerId}
+              prompts={prompts}
+              isImposter={isImposter}
+              onAnswersSubmitted={() => {}}
+              writeToken={playerData.writeToken || ''}
+            />
           )}
+
+          {/* Answer Progress for host */}
+          {playerData.isHost && (
+            <AnswerProgress
+              roundId={gameState.id}
+              players={gameState.players || []}
+              prompts={prompts}
+              onForceReveal={async () => {
+                try {
+                  const { data: roundData } = await supabase
+                    .from('rounds')
+                    .select('id')
+                    .eq('room_id', playerData.roomId)
+                    .order('round_number', { ascending: false })
+                    .limit(1)
+                    .single();
+                  
+                  if (roundData) {
+                    await supabase.rpc('advance_phase', {
+                      p_round_id: roundData.id,
+                      p_write_token: playerData.writeToken || ''
+                    });
+                    await refreshGameState();
+                  }
+                } catch (error) {
+                  console.error('Error advancing phase:', error);
+                  setError('Failed to advance phase');
+                }
+              }}
+              writeToken={playerData.writeToken || ''}
+            />
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Reveal clues phase - now shows answers in a grid
+  if (currentPhase === 'reveal_clues') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-900 via-purple-900 to-pink-900 flex items-center justify-center p-4">
+        <RealtimeStatusIndicator />
+        <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-3xl p-8 max-w-7xl w-full">
+          <RevealGrid
+            roundId={gameState.id}
+            players={gameState.players || []}
+            prompts={prompts}
+            onStartVoting={async () => {
+              try {
+                const { data: roundData } = await supabase
+                  .from('rounds')
+                  .select('id')
+                  .eq('room_id', playerData.roomId)
+                  .order('round_number', { ascending: false })
+                  .limit(1)
+                  .single();
+                
+                if (roundData) {
+                  await supabase.rpc('advance_phase', {
+                    p_round_id: roundData.id,
+                    p_write_token: playerData.writeToken || ''
+                  });
+                  await refreshGameState();
+                }
+              } catch (error) {
+                console.error('Error advancing phase:', error);
+                setError('Failed to advance phase');
+              }
+            }}
+            writeToken={playerData.writeToken || ''}
+            isHost={playerData.isHost}
+          />
         </div>
       </div>
     );
@@ -813,110 +918,40 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
 
   // Voting phase
   if (currentPhase === 'vote') {
-    const hasVoted = gameState.votes?.[playerData.playerId] !== undefined;
-    
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-900 via-pink-900 to-red-900 flex items-center justify-center p-4">
-        <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-3xl p-8 max-w-2xl w-full">
-          <div className="text-center mb-8">
-            <h1 className="text-4xl font-bold text-white mb-2">🗳️ Voting Phase</h1>
-            <p className="text-white/80">Who do you think is the imposter?</p>
-          </div>
-
-          {!hasVoted ? (
-            <>
-              <div className="space-y-4 mb-8">
-                {gameState.players?.map((player: Player) => (
-                  <button
-                    key={player.id}
-                    onClick={() => handleVote(player.id)}
-                    disabled={player.id === playerData.playerId}
-                    className={`w-full bg-white/10 backdrop-blur-sm border rounded-xl p-4 flex items-center space-x-4 transition-all ${
-                      player.id === playerData.playerId 
-                        ? 'opacity-50 cursor-not-allowed border-gray-500' 
-                        : selectedVote === player.id
-                        ? 'border-yellow-400 bg-yellow-400/20'
-                        : 'border-white/20 hover:bg-white/20'
-                    }`}
-                  >
-                    <div className="text-3xl">{player.avatar}</div>
-                    <div className="flex-1 text-left">
-                      <p className="text-white font-medium">
-                        {player.name} {player.id === playerData.playerId && '(You)'}
-                      </p>
-                      <p className="text-white/70 text-sm">
-                        Clue: "{gameState.clues?.[player.id] || 'No clue given'}"
-                      </p>
-                    </div>
-                    {selectedVote === player.id && (
-                      <div className="text-yellow-400 text-2xl">✓</div>
-                    )}
-                  </button>
-                ))}
-              </div>
-            </>
-          ) : (
-            <div className="text-center">
-              <div className="text-6xl mb-4">🗳️</div>
-              <p className="text-white text-xl mb-4">Vote submitted!</p>
-              <p className="text-white/70">Waiting for other players...</p>
-              
-              <div className="mt-8 space-y-2">
-                <p className="text-white/70 text-sm">Voting status:</p>
-                {gameState.players?.map((p: Player) => {
-                  const voted = gameState.votes?.[p.id] !== undefined;
-                  return (
-                    <div key={p.id} className="flex items-center justify-center gap-2">
-                      <span className="text-lg">{p.avatar}</span>
-                      <span className="text-white text-sm">{p.name}</span>
-                      <span className={voted ? 'text-green-400' : 'text-gray-400'}>
-                        {voted ? '✓' : '○'}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Manual continue button for host when all players have voted */}
-              {playerData.isHost && (() => {
-                const allVoted = gameState.players?.every((p: Player) => 
-                  gameState.votes?.[p.id] !== undefined
-                );
-                return allVoted ? (
-                  <div className="mt-8">
-                    <button
-                      onClick={async () => {
-                        try {
-                          // Get current round ID
-                          const { data: roundData } = await supabase
-                            .from('rounds')
-                            .select('id')
-                            .eq('room_id', playerData.roomId)
-                            .order('round_number', { ascending: false })
-                            .limit(1)
-                            .single();
-                          
-                          if (roundData) {
-                            await supabase.rpc('advance_phase', {
-                              p_round_id: roundData.id,
-                              p_write_token: playerData.writeToken || ''
-                            });
-                            await refreshGameState();
-                          }
-                        } catch (error) {
-                          console.error('Error advancing phase:', error);
-                          setError('Failed to advance phase');
-                        }
-                      }}
-                      className="w-full py-4 bg-gradient-to-r from-green-500 to-emerald-500 text-white font-bold rounded-xl hover:from-green-600 hover:to-emerald-600 transition-all duration-300 shadow-lg hover:shadow-green-400/30 text-lg"
-                    >
-                      Continue to Imposter Guess
-                    </button>
-                  </div>
-                ) : null;
-              })()}
-            </div>
-          )}
+        <RealtimeStatusIndicator />
+        <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-3xl p-8 max-w-4xl w-full">
+          <VotePanel
+            roundId={gameState.id}
+            players={gameState.players || []}
+            currentPlayerId={playerData.playerId}
+            imposterId={gameState.imposter_id}
+            onVotingComplete={async () => {
+              try {
+                const { data: roundData } = await supabase
+                  .from('rounds')
+                  .select('id')
+                  .eq('room_id', playerData.roomId)
+                  .order('round_number', { ascending: false })
+                  .limit(1)
+                  .single();
+                
+                if (roundData) {
+                  await supabase.rpc('advance_phase', {
+                    p_round_id: roundData.id,
+                    p_write_token: playerData.writeToken || ''
+                  });
+                  await refreshGameState();
+                }
+              } catch (error) {
+                console.error('Error advancing phase:', error);
+                setError('Failed to advance phase');
+              }
+            }}
+            writeToken={playerData.writeToken || ''}
+            allowSelfVote={false}
+          />
         </div>
       </div>
     );
@@ -928,35 +963,68 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
     
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 flex items-center justify-center p-4">
+        <RealtimeStatusIndicator />
         <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-3xl p-8 max-w-2xl w-full text-center">
           <div className="text-6xl mb-6">🎯</div>
           <h1 className="text-4xl font-bold text-white mb-4">Imposter Guess</h1>
           
           {isImposter ? (
             <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-2xl p-6 mb-8">
-              <h2 className="text-2xl font-bold text-white mb-4">Guess the Secret Word!</h2>
+              <h2 className="text-2xl font-bold text-white mb-4">Guess the Secret Prompt!</h2>
               <p className="text-white/70 mb-6">
                 You get a bonus point if you guess correctly!
               </p>
               
-              <div className="grid grid-cols-4 gap-3 mb-6">
-                {[1, 2, 3, 4, 5, 6, 7, 8].map((index) => (
+              <div className="space-y-3 mb-6">
+                {gameState.text_prompts?.map((prompt: TextPrompt) => (
                   <button
-                    key={index}
-                    onClick={() => setImposterGuess(index)}
-                    className={`py-3 px-4 rounded-xl font-bold transition-all ${
-                      imposterGuess === index
+                    key={prompt.id}
+                    onClick={() => setImposterGuess(prompt.id)}
+                    className={`w-full py-3 px-4 rounded-xl font-bold transition-all text-left ${
+                      imposterGuess === prompt.id
                         ? 'bg-gradient-to-r from-yellow-500 to-orange-500 text-white shadow-lg'
                         : 'bg-white/10 text-white/70 hover:bg-white/20'
                     }`}
                   >
-                    {gameState?.topic?.[`word${index}` as keyof typeof gameState.topic] || `Word ${index}`}
+                    <div className="text-sm">{prompt.prompt}</div>
+                    <div className="text-xs opacity-70 mt-1">({prompt.category})</div>
                   </button>
                 ))}
               </div>
               
               <button
-                onClick={() => handleEndRound(imposterGuess)}
+                onClick={async () => {
+                  try {
+                    // Get current round ID
+                    const { data: roundData } = await supabase
+                      .from('rounds')
+                      .select('id')
+                      .eq('room_id', playerData.roomId)
+                      .order('round_number', { ascending: false })
+                      .limit(1)
+                      .single();
+                    
+                    if (!roundData) {
+                      setError('No active round found');
+                      return;
+                    }
+                    
+                    // Use the integrated updateScores function
+                    await gameStore.updateScores(
+                      roundData.id,
+                      imposterGuess,
+                      playerData.writeToken || ''
+                    );
+                    
+                    console.log('Round ended successfully, scores updated');
+                    
+                    // Refresh game state to get updated scores
+                    await refreshGameState();
+                  } catch (error) {
+                    console.error('Error ending round:', error);
+                    setError('Failed to end round');
+                  }
+                }}
                 className="w-full py-4 bg-gradient-to-r from-yellow-500 to-orange-500 text-white font-bold rounded-xl hover:from-yellow-600 hover:to-orange-600 transition-all duration-300 shadow-lg hover:shadow-yellow-400/30 text-lg"
               >
                 Submit Guess & End Round
@@ -977,116 +1045,33 @@ export function Game({ onBackToLobby, playerData }: GameProps) {
 
   // Results phase
   if (currentPhase === 'reveal' || currentPhase === 'done') {
-    const imposter = gameState.players?.find((p: Player) => p.id === gameState.imposter_id);
-    const voteCounts: { [key: string]: number } = {};
-    
-    // Count votes
-    Object.values(gameState.votes || {}).forEach((targetId: any) => {
-      voteCounts[targetId] = (voteCounts[targetId] || 0) + 1;
-    });
-    
-    // Find most voted player
-    const mostVoted = Object.entries(voteCounts).reduce((a, b) => 
-      voteCounts[a[0]] > voteCounts[b[0]] ? a : b, ['', 0]
-    )[0];
-    
-    const detectivesWin = mostVoted === gameState.imposter_id;
-    const secretWord = gameState?.topic && gameState?.secret_word_index 
-      ? gameState.topic[`word${gameState.secret_word_index}` as keyof typeof gameState.topic] as string
-      : '???';
-    
-    // Check for game winner
-    const gameWinner = gameState.players?.find((p: Player) => 
-      (p.total_score ?? 0) >= (gameState.room?.win_target || 5)
-    );
-    
     return (
       <div className="min-h-screen bg-gradient-to-br from-green-900 via-emerald-900 to-teal-900 flex items-center justify-center p-4">
-        <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-3xl p-8 max-w-4xl w-full text-center">
-          <div className="text-6xl mb-6">{detectivesWin ? '🎉' : '😈'}</div>
-          <h1 className="text-4xl font-bold text-white mb-4">Round Results</h1>
-          
-          {gameWinner && (
-            <div className="bg-gradient-to-r from-yellow-500/20 to-orange-500/20 backdrop-blur-sm border border-yellow-400/30 rounded-2xl p-6 mb-8">
-              <div className="text-6xl mb-4">🏆</div>
-              <h2 className="text-3xl font-bold text-yellow-400 mb-2">GAME WINNER!</h2>
-              <div className="text-2xl text-white font-semibold mb-2">{gameWinner.name}</div>
-              <p className="text-yellow-200">Reached {gameWinner.total_score ?? 0} points!</p>
-            </div>
-          )}
-          
-          <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-2xl p-6 mb-8">
-            <h2 className="text-2xl font-bold text-white mb-4">The Secret Word Was...</h2>
-            <div className="text-4xl font-bold text-yellow-400 mb-2">{secretWord}</div>
-            <p className="text-white/70 mb-4">
-              {detectivesWin ? 'The detectives caught the imposter! 🕵️' : 'The imposter fooled everyone! 🦹'}
-            </p>
-            <div className="text-white/70">
-              <p>Imposter: {imposter?.name}</p>
-              {gameState.imposter_guess_index && (
-                <p>Imposter guessed: {gameState.topic?.[`word${gameState.imposter_guess_index}` as keyof typeof gameState.topic]}</p>
-              )}
-            </div>
-          </div>
-
-          <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-2xl p-4 mb-8">
-            <h3 className="text-xl font-bold text-white mb-4">Vote Results:</h3>
-            {gameState.players?.map((player: Player) => (
-              <div key={player.id} className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-lg">{player.avatar}</span>
-                  <span className="text-white">{player.name}</span>
-                  {player.id === gameState.imposter_id && (
-                    <span className="text-red-400 text-sm">(Imposter)</span>
-                  )}
-                </div>
-                <span className="text-white/70">{voteCounts[player.id] || 0} votes</span>
-              </div>
-            ))}
-          </div>
-
-          <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-2xl p-4 mb-8">
-            <h3 className="text-xl font-bold text-white mb-4">Current Scores:</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {gameState.players?.map((player: Player) => (
-                <div key={player.id} className="flex items-center justify-between bg-white/5 rounded-xl p-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-lg">{player.avatar}</span>
-                    <span className="text-white">{player.name}</span>
-                    {player.id === gameState.imposter_id && (
-                      <span className="text-red-400 text-sm">(Imposter)</span>
-                    )}
-                  </div>
-                  <span className="text-yellow-400 font-bold">{player.total_score ?? 0} pts</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="space-y-3">
-            {playerData.isHost && !gameWinner && (
-              <button
-                onClick={resetGame}
-                className="w-full py-4 bg-gradient-to-r from-blue-500 to-purple-500 text-white font-bold rounded-xl hover:from-blue-600 hover:to-purple-600 transition-all duration-300 shadow-lg hover:shadow-blue-400/30 text-lg"
-              >
-                Next Round
-              </button>
-            )}
-            {gameWinner && (
-              <button
-                onClick={resetGame}
-                className="w-full py-4 bg-gradient-to-r from-yellow-500 to-orange-500 text-white font-bold rounded-xl hover:from-yellow-600 hover:to-orange-600 transition-all duration-300 shadow-lg hover:shadow-yellow-400/30 text-lg"
-              >
-                New Game
-              </button>
-            )}
-            <button
-              onClick={onBackToLobby}
-              className="w-full py-4 bg-gradient-to-r from-gray-500 to-gray-600 text-white font-bold rounded-xl hover:from-gray-600 hover:to-gray-700 transition-all duration-300 shadow-lg"
-            >
-              Back to Lobby
-            </button>
-          </div>
+        <RealtimeStatusIndicator />
+        <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-3xl p-8 max-w-6xl w-full">
+          <ResultsPanel
+            roundId={gameState.id}
+            players={gameState.players || []}
+            imposterId={gameState.imposter_id}
+            onNextRound={async () => {
+              try {
+                // Use the integrated startRound function
+                await gameStore.startRound(
+                  playerData.roomId,
+                  playerData.writeToken || '',
+                  4
+                );
+                // Refresh game state to get the new round data
+                await refreshGameState();
+              } catch (error) {
+                console.error('Error starting next round:', error);
+                setError('Failed to start next round');
+              }
+            }}
+            onEndGame={onBackToLobby}
+            writeToken={playerData.writeToken || ''}
+            isHost={playerData.isHost}
+          />
         </div>
       </div>
     );

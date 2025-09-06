@@ -67,6 +67,23 @@ export interface Vote {
   created_at: string;
 }
 
+export interface Prompt {
+  id: number;
+  round_id: string;
+  prompt_text: string;
+  prompt_order: number;
+  created_at: string;
+}
+
+export interface Answer {
+  id: number;
+  round_id: string;
+  player_id: string;
+  prompt_id: number;
+  answer_text: string;
+  submitted_at: string;
+}
+
 export interface GameState {
   room?: Room;
   players: Player[];
@@ -75,4 +92,6 @@ export interface GameState {
   topic?: Topic;
   clues: Clue[];
   votes: Vote[];
+  prompts: Prompt[];
+  answers: Answer[];
 }
