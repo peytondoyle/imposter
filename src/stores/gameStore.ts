@@ -78,7 +78,7 @@ export const useGameStore = create<GameStore>((set) => ({
       const result = await gameIntegration.startRound(roomId, writeToken, promptCount);
       
       // Update the store with the new round data
-      set((state) => ({
+      set(() => ({
         prompts: result.prompts.map((p, index) => ({
           id: p.id,
           round_id: '', // Will be set by the round
@@ -116,7 +116,7 @@ export const useGameStore = create<GameStore>((set) => ({
   getAnswers: async (roundId: string) => {
     try {
       const answers = await gameIntegration.getAnswers(roundId);
-      set({ answers });
+      set({ answers: answers as any });
     } catch (error) {
       console.error('Error getting answers:', error);
       throw error;
@@ -136,7 +136,7 @@ export const useGameStore = create<GameStore>((set) => ({
   getVotes: async (roundId: string) => {
     try {
       const votes = await gameIntegration.getVotes(roundId);
-      set({ votes });
+      set({ votes: votes as any });
     } catch (error) {
       console.error('Error getting votes:', error);
       throw error;
@@ -145,9 +145,8 @@ export const useGameStore = create<GameStore>((set) => ({
   
   updateScores: async (roundId: string, imposterGuessIndex: number, writeToken: string) => {
     try {
-      const result = await gameIntegration.updateScores(roundId, imposterGuessIndex, writeToken);
-      console.log('Scores updated successfully:', result);
-      return result;
+      await gameIntegration.updateScores(roundId, imposterGuessIndex, writeToken);
+      console.log('Scores updated successfully');
     } catch (error) {
       console.error('Error updating scores:', error);
       throw error;
